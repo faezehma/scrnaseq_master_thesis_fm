@@ -1,0 +1,1088 @@
+---
+title: "visualization_compare_prefiltering"
+output: html_document
+---
+
+```{r}
+#library(CiteFuse)
+library(scater)
+library(SingleCellExperiment)
+library(DT)
+library(Seurat)
+#library(DoubletFinder)
+library(dplyr)
+library(stringr)
+library(ggplot2)
+```
+
+```{r, setup, include=FALSE}
+knitr::opts_knit$set(root.dir = '~/01_data/Faezeh/prefilt_methods/')
+```
+
+```{r}
+#setwd("/home/faezeh/Documents/")
+files <- list.files(path="~/01_data/Faezeh/prefilt_methods/", pattern="merge.*.rds", full.names=TRUE, recursive=FALSE)
+print(files)
+metadata_list <- lapply(files, function(x) {
+    merge.methods <- readRDS(x) # load file
+    merge.methods$log10nUMI <- log10(merge.methods$nCount_RNA)
+    merge.methods$log10nGene <- log10(merge.methods$nFeature_RNA)
+    merge.methods$mitoRatio <- PercentageFeatureSet(object = merge.methods, pattern = "^mt-|^MT-") #human=MT- 
+    merge.methods$mitoRatio <- merge.methods@meta.data$mitoRatio / 100
+    merge.methods$pct_mt <- merge.methods@meta.data$mitoRatio * 100
+    metadata <- merge.methods[[]]
+    metadata <- metadata %>%
+      dplyr::rename(seq_folder = orig.ident,
+                nUMI = nCount_RNA,
+                nGene = nFeature_RNA)
+
+    # metadata$filtering <- NA
+    # metadata$filtering[which(str_detect(metadata$cells, "^cellranger_"))] <- "cellranger"
+    # metadata$filtering[which(str_detect(metadata$cells, "^emptydrops_"))] <- "emptydrops"
+    # metadata$filtering[which(str_detect(metadata$cells, "^seurat200_"))] <- "seurat200"
+    
+    # Add metadata back to Seurat object
+    merge.methods@meta.data <- metadata
+    return(merge.methods)
+})
+names(metadata_list) <- c('CISE13', 'neuron_5k_v3', 'neuron1kv3', 'pbmc1k', 'pbmc10k')
+```
+
+```{r}
+metadata_list
+```
+
+```{r}
+metadata_list$pbmc10k <- RenameIdents(object = metadata_list$pbmc10k, 'SeuratProject' = 'cellranger')
+```
+
+```{r}
+table(metadata_list$pbmc1k$methods)
+```
+
+
+```{r}
+metadata_list$pbmc1k[[]]
+```
+
+#pct mito based on nmads=4 and SD lower cut-off for all datasets
+```{r}
+selected_cellranger <- WhichCells(metadata_list$pbmc1k, expression = pct_mt < 21.309 & methods == "cellranger")
+merge.methods.filtmito <- subset(metadata_list$pbmc1k, cells = selected_cellranger)
+table(Idents(merge.methods.filtmito))
+low.selected_cellranger <- WhichCells(merge.methods.filtmito, expression = nGene <10^2.938 & methods == "cellranger")
+low.selected_cellranger_ <- WhichCells(merge.methods.filtmito, expression = nUMI < 10^3.417 & methods == "cellranger")
+data.filt.SD.pre.pbmc <- subset(merge.methods.filtmito, cells=setdiff(WhichCells(merge.methods.filtmito),c(low.selected_cellranger,
+                                                                     low.selected_cellranger_)))
+table(Idents(data.filt.SD.pre.pbmc))
+```
+
+```{r}
+#nmads=4 for mito.percent
+selected_cellranger <- WhichCells(metadata_list$pbmc1k, expression = pct_mt < 21.309 & methods == "cellranger")
+merge.methods.filtmito <- subset(metadata_list$pbmc1k, cells = selected_cellranger)
+
+#nmads=3 for the other metrics
+low.selected_cellranger <- WhichCells(merge.methods.filtmito, expression = nGene < 10^2.833 & methods == "cellranger")
+low.selected_cellranger_ <- WhichCells(merge.methods.filtmito, expression = nUMI < 10^3.24 & methods == "cellranger")
+data.filt.MAD.pre.pbmc <- subset(merge.methods.filtmito, cells=setdiff(WhichCells(merge.methods.filtmito),c(low.selected_cellranger,
+                                                                       low.selected_cellranger_)))
+table(Idents(data.filt.MAD.pre.pbmc))
+```
+
+```{r}
+selected_cellranger <- WhichCells(metadata_list$pbmc10k, expression = pct_mt < 18.791)
+merge.methods.filtmito <- subset(metadata_list$pbmc10k, cells = selected_cellranger)
+low.selected_cellranger <- WhichCells(merge.methods.filtmito, expression = nGene <10^2.926)
+low.selected_cellranger_ <- WhichCells(merge.methods.filtmito, expression = nUMI < 10^3.324)
+data.filt.SD.pre.pbmc10k <- subset(merge.methods.filtmito, cells=setdiff(WhichCells(merge.methods.filtmito),c(low.selected_cellranger,
+                                                                          low.selected_cellranger_)))
+table(Idents(data.filt.SD.pre.pbmc10k))
+```
+
+```{r}
+#nmads=4 for mito.percent
+selected_cellranger <- WhichCells(metadata_list$pbmc10k, expression = pct_mt < 18.791)
+merge.methods.filtmito <- subset(metadata_list$pbmc10k, cells = selected_cellranger)
+
+#nmads=3 for the other metrics
+low.selected_cellranger <- WhichCells(merge.methods.filtmito, expression = nGene < 10^2.802)
+low.selected_cellranger_ <- WhichCells(merge.methods.filtmito, expression = nUMI < 10^3.218)
+data.filt.MAD.pre.pbmc10k <- subset(merge.methods.filtmito, cells=setdiff(WhichCells(merge.methods.filtmito),c(low.selected_cellranger,
+                                                                       low.selected_cellranger_)))
+
+table(Idents(data.filt.MAD.pre.pbmc10k))
+```
+
+
+```{r}
+selected_cellranger <- WhichCells(metadata_list$CISE13, expression = pct_mt < 8.425 & methods == "cellranger")
+merge.methods.filtmito <- subset(metadata_list$CISE13, cells = selected_cellranger)
+table(Idents(merge.methods.filtmito))
+low.selected_cellranger <- WhichCells(merge.methods.filtmito, expression = nGene <10^2.422 & methods == "cellranger")
+low.selected_cellranger_ <- WhichCells(merge.methods.filtmito, expression = nUMI < 10^2.763 & methods == "cellranger")
+data.filt.SD.pre.CISE13 <- subset(merge.methods.filtmito, cells=setdiff(WhichCells(merge.methods.filtmito),c(low.selected_cellranger,
+                                                                     low.selected_cellranger_)))
+table(Idents(data.filt.SD.pre.CISE13))
+```
+
+```{r}
+#nmads=4 for mito.percent
+selected_cellranger <- WhichCells(metadata_list$CISE13, expression = pct_mt < 8.425 & methods == "cellranger")
+merge.methods.filtmito <- subset(metadata_list$CISE13, cells = selected_cellranger)
+
+#nmads=3 for the other metrics
+low.selected_cellranger <- WhichCells(merge.methods.filtmito, expression = nGene < 10^2.362 & methods == "cellranger")
+#low.selected_cellranger_ <- WhichCells(merge.methods.filtmito, expression = nUMI < 10^ & methods == "cellranger") #nothing 3mads
+data.filt.MAD.pre.CISE13 <- subset(merge.methods.filtmito, cells=setdiff(WhichCells(merge.methods.filtmito),c(low.selected_cellranger,
+                                                                       low.selected_cellranger_)))
+
+table(Idents(data.filt.MAD.pre.CISE13))
+```
+
+```{r}
+selected_cellranger <- WhichCells(metadata_list$neuron1kv3, expression = pct_mt < 20.436 & methods == "cellranger")
+merge.methods.filtmito <- subset(metadata_list$neuron1kv3, cells = selected_cellranger)
+table(Idents(merge.methods.filtmito))
+low.selected_cellranger <- WhichCells(merge.methods.filtmito, expression = nGene <10^ 3.21 & methods == "cellranger")
+low.selected_cellranger_ <- WhichCells(merge.methods.filtmito, expression = nUMI < 10^ 3.38 & methods == "cellranger")
+data.filt.SD.pre.neuron1kv3 <- subset(merge.methods.filtmito, cells=setdiff(WhichCells(merge.methods.filtmito),c(low.selected_cellranger,
+                                                                     low.selected_cellranger_)))
+table(Idents(data.filt.SD.pre.neuron1kv3))
+```
+
+```{r}
+#nmads=4 for mito.percent
+selected_cellranger <- WhichCells(metadata_list$neuron1kv3, expression = pct_mt < 20.436 & methods == "cellranger")
+merge.methods.filtmito <- subset(metadata_list$neuron1kv3, cells = selected_cellranger)
+
+#3 mads lower
+low.selected_cellranger <- WhichCells(merge.methods.filtmito, expression = nGene < 10^2.919 & methods == "cellranger")
+low.selected_cellranger_ <- WhichCells(merge.methods.filtmito, expression = nUMI < 10^2.956 & methods == "cellranger")
+data.filt.MAD.pre.neuron1kv3 <- subset(merge.methods.filtmito, cells=setdiff(WhichCells(merge.methods.filtmito),c(low.selected_cellranger,
+                                                                       low.selected_cellranger_)))
+ 
+table(Idents(data.filt.MAD.pre.neuron1kv3))
+```
+
+```{r}
+selected_cellranger <- WhichCells(metadata_list$neuron_5k_v3, expression = pct_mt < 13.99 & methods == "cellranger")
+merge.methods.filtmito <- subset(metadata_list$neuron_5k_v3, cells = selected_cellranger)
+table(Idents(merge.methods.filtmito))
+low.selected_cellranger <- WhichCells(merge.methods.filtmito, expression = nGene <10^3.262 & methods == "cellranger")
+low.selected_cellranger_ <- WhichCells(merge.methods.filtmito, expression = nUMI < 10^3.408 & methods == "cellranger")
+data.filt.SD.pre.neuron5k_v3 <- subset(merge.methods.filtmito, cells=setdiff(WhichCells(merge.methods.filtmito),c(low.selected_cellranger,
+                                                                     low.selected_cellranger_)))
+table(Idents(data.filt.SD.pre.neuron5k_v3))
+```
+
+```{r}
+#nmads=4 for mito.percent
+selected_cellranger <- WhichCells(metadata_list$neuron_5k_v3, expression = pct_mt < 13.99 & methods == "cellranger")
+merge.methods.filtmito <- subset(metadata_list$neuron_5k_v3, cells = selected_cellranger)
+
+#3mads lower
+
+low.selected_cellranger <- WhichCells(merge.methods.filtmito, expression = nGene < 10^3.111 & methods == "cellranger")
+low.selected_cellranger_ <- WhichCells(merge.methods.filtmito, expression = nUMI < 10^3.277 & methods == "cellranger")
+data.filt.MAD.pre.neuron5k_v3 <- subset(merge.methods.filtmito, cells=setdiff(WhichCells(merge.methods.filtmito),c(low.selected_cellranger,
+                                                                       low.selected_cellranger_)))
+
+table(Idents(data.filt.MAD.pre.neuron5k_v3))
+```
+# pca outlier detection (extract only lower tail outliers): it can be used for all datasets
+```{r}
+library(SingleCellExperiment)
+library(scater)
+library(robustbase)
+pca_outlier <- function(d){
+  cellranger <- subset(d, idents = "cellranger")
+  x <- SingleCellExperiment(list(counts=cellranger[["RNA"]]@counts))
+  sc.df<- perCellQCMetrics(x, subsets=list(Mito=grep("MT-|mt-", rownames(x))))
+  colData(x) <- cbind(colData(x), sc.df)
+  x <- runColDataPCA(x, variables=list("sum", "detected", "subsets_Mito_percent"), outliers = TRUE)
+  
+  #based on median***
+  outlier_pca <- x[,x$outlier == TRUE]
+  sum_median <- median(x$sum)
+  detect_median <- median(x$detected)
+  mito_median <- median(x$subsets_Mito_percent)
+  
+  outlier_pca <- outlier_pca[,outlier_pca$sum<sum_median]
+  outlier_pca <- outlier_pca[,outlier_pca$detected<detect_median]
+  outlier_pca <- outlier_pca[,outlier_pca$subsets_Mito_percent>mito_median]
+  
+  #filtered_pca <- x[,!x$outlier == TRUE]
+  out_cells <- colnames(outlier_pca)
+  cellranger_pca <- subset(cellranger, cells=setdiff(WhichCells(cellranger), out_cells))
+  return(cellranger_pca)
+}
+```
+
+```{r}
+data.filt.pca.pre.CISE13 <- pca_outlier(metadata_list$CISE13)
+data.filt.pca.pre.pbmc1 <- pca_outlier(metadata_list$pbmc1k)
+data.filt.pca.pre.pbmc10 <- pca_outlier(metadata_list$pbmc10k)
+data.filt.pca.pre.n1 <- pca_outlier(metadata_list$neuron1kv3)
+data.filt.pca.pre.n5 <- pca_outlier(metadata_list$neuron_5k_v3)
+```
+
+#prepare filtered obj
+```{r}
+pre_process <- function(x){
+  data <- x
+  data <- subset(data, idents="cellranger")
+  data <- NormalizeData(data)
+  data <- ScaleData(data)
+  data <- FindVariableFeatures(data, selection.method = "vst", nfeatures = 2000)
+  data <- RunPCA(data)
+  data <- RunUMAP(data, dims = 1:15)
+  return(data)
+}
+```
+
+```{r}
+# pbmc1 <- pre_process(data.filt.SD.pre.pbmc)
+# pbmc10 <- pre_process(data.filt.SD.pre.pbmc10k)
+# cise <- pre_process(data.filt.SD.pre.CISE13)
+# n1 <- pre_process(data.filt.SD.pre.neuron1kv3)
+# n5 <- pre_process(data.filt.SD.pre.neuron5k_v3)
+```
+
+
+#label cells as low quality
+```{r}
+label_cells <- function(main_data,filt_data){
+#j <- metadata_list$neuron_5k_v3
+#x <- data.filt.SD.pre.neuron5k_v3
+  j <- main_data
+  x <- filt_data
+  seuratobj_m <- subset(j, idents="cellranger")
+  seuratobj_m$kept <- "Kept"
+  
+  `%!in%` <- Negate(`%in%`)
+  
+  for(i in rownames(seuratobj_m@meta.data)){
+    if (i %!in% colnames(x = x)){
+      seuratobj_m$kept[[i]] = "low quality cells"
+    }
+    else {
+      next
+    }
+      
+  }
+  return(seuratobj_m)
+}
+```
+
+
+```{r}
+#sd
+label_cells_pbmc1_sd <- label_cells(metadata_list$pbmc1k,data.filt.SD.pre.pbmc)
+label_cells_pbmc10_sd <- label_cells(metadata_list$pbmc10k,data.filt.SD.pre.pbmc10k)
+label_cells_cise_sd <- label_cells(metadata_list$CISE13,data.filt.SD.pre.CISE13)
+label_cells_n1_sd <- label_cells(metadata_list$neuron1kv3,data.filt.SD.pre.neuron1kv3)
+label_cells_n5_sd <- label_cells(metadata_list$neuron_5k_v3,data.filt.SD.pre.neuron5k_v3)
+
+#mads
+label_cells_pbmc1_mad <- label_cells(metadata_list$pbmc1k,data.filt.MAD.pre.pbmc)
+label_cells_pbmc10_mad <- label_cells(metadata_list$pbmc10k,data.filt.MAD.pre.pbmc10k)
+label_cells_cise_mad <- label_cells(metadata_list$CISE13,data.filt.MAD.pre.CISE13)
+label_cells_n1_mad <- label_cells(metadata_list$neuron1kv3,data.filt.MAD.pre.neuron1kv3)
+label_cells_n5_mad <- label_cells(metadata_list$neuron_5k_v3,data.filt.MAD.pre.neuron5k_v3)
+
+
+#pca
+label_cells_pbmc1_pca <- label_cells(metadata_list$pbmc1k,data.filt.pca.pre.pbmc1)
+label_cells_pbmc10_pca <- label_cells(metadata_list$pbmc10k,data.filt.pca.pre.pbmc10)
+label_cells_cise_pca <- label_cells(metadata_list$CISE13,data.filt.pca.pre.CISE13)
+label_cells_n1_pca <- label_cells(metadata_list$neuron1kv3,data.filt.pca.pre.n1)
+label_cells_n5_pca <- label_cells(metadata_list$neuron_5k_v3,data.filt.pca.pre.n5)
+
+```
+
+
+# prepare main data with label cells in it
+```{r}
+
+main_obj_pbmc1_sd <- pre_process(label_cells_pbmc1_sd)
+main_obj_pbmc10_sd <- pre_process(label_cells_pbmc10_sd)
+main_obj_cise_sd <- pre_process(label_cells_cise_sd)
+main_obj_n1_sd <- pre_process(label_cells_n1_sd)
+main_obj_n5_sd <- pre_process(label_cells_n5_sd)
+
+main_obj_pbmc1_mad <- pre_process(label_cells_pbmc1_mad)
+main_obj_pbmc10_mad <- pre_process(label_cells_pbmc10_mad)
+main_obj_cise_mad <- pre_process(label_cells_cise_mad)
+main_obj_n1_mad <- pre_process(label_cells_n1_mad)
+main_obj_n5_mad <- pre_process(label_cells_n5_mad)
+
+main_obj_pbmc1_pca <- pre_process(label_cells_pbmc1_pca)
+main_obj_pbmc10_pca <- pre_process(label_cells_pbmc10_pca)
+main_obj_cise_pca <- pre_process(label_cells_cise_pca)
+main_obj_n1_pca <- pre_process(label_cells_n1_pca)
+main_obj_n5_pca <- pre_process(label_cells_n5_pca)
+
+#unfiltered data
+main_obj_pbmc1 <- pre_process(metadata_list$pbmc1k)
+main_obj_pbmc10 <- pre_process(metadata_list$pbmc10k)
+main_obj_cise <- pre_process(metadata_list$CISE13)
+main_obj_n1 <- pre_process(metadata_list$neuron1kv3)
+main_obj_n5 <- pre_process(metadata_list$neuron_5k_v3)
+```
+
+```{r}
+saveRDS(main_obj_pbmc1_sd, "main_obj_pbmc1_sd.rds")
+saveRDS(main_obj_pbmc10_sd, "main_obj_pbmc10_sd.rds")
+saveRDS(main_obj_cise_sd, "main_obj_cise_sd.rds")
+saveRDS(main_obj_n1_sd, "main_obj_n1_sd.rds")
+saveRDS(main_obj_n5_sd, "main_obj_n5_sd.rds")
+
+saveRDS(main_obj_pbmc1_mad, "main_obj_pbmc1_mad.rds")
+saveRDS(main_obj_pbmc10_mad, "main_obj_pbmc10_mad.rds")
+saveRDS(main_obj_cise_mad, "main_obj_cise_mad.rds")
+saveRDS(main_obj_n1_mad, "main_obj_n1_mad.rds")
+saveRDS(main_obj_n5_mad, "main_obj_n5_mad.rds")
+
+```
+
+
+```{r}
+files <- list.files(path="~/01_data/Faezeh/prefilt_methods", pattern="^main_obj_*", full.names=TRUE, recursive=FALSE)
+print(files)
+main_obj_list <- lapply(files, function(x) {
+    main_obj <- readRDS(x)
+    return(main_obj)
+})
+
+```
+```{r}
+names(main_obj_list) <- c('main_obj_cise_mad', 'main_obj_cise_sd', 'main_obj_n1_mad', 'main_obj_n1_sd', 'main_obj_n5_mad','main_obj_n5_sd', 'main_obj_pbmc1_mad','main_obj_pbmc1_sd','main_obj_pbmc10_mad','main_obj_pbmc10_sd')
+```
+
+
+
+```{r}
+# a = main_obj[[]]
+# a[order(a$log10nUMI),]
+```
+
+```{r}
+umpa_cluster <- function(x){
+  x <- FindNeighbors(x, dims = 1:15)
+  x <- FindClusters(x, resolution = 0.4)
+  return(x)
+}
+
+main_obj_pbmc1 <- umpa_cluster(main_obj_pbmc1)
+main_obj_pbmc10 <- umpa_cluster(main_obj_pbmc10)
+main_obj_cise <- umpa_cluster(main_obj_cise)
+main_obj_n1 <- umpa_cluster(main_obj_n1)
+main_obj_n5 <- umpa_cluster(main_obj_n5)
+```
+
+
+# UMAP plot
+
+```{r}
+cols_20 <- c("#4E79A7", "#A0CBE8", "#F28E2B", "#FFBE7D", "#59A14F",
+                 "#8CD17D", "#B6992D", "#F1CE63", "#499894", "#86BCB6",
+                 "#E15759", "#FF9D9A", "#79706E", "#BAB0AC", "#D37295",
+                 "#FABFD2", "#B07AA1", "#D4A6C8", "#9D7660", "#D7B5A6")
+```
+
+```{r}
+
+#visualize data
+umap_clusters <- function(x, title){
+ UMAPPlot(x, cols = cols_20, label =TRUE, label.size = 4)+ ggtitle(title)+
+    theme(plot.title = element_text(hjust = 0.5)) + theme_void() + theme(legend.position = "none", panel.border = element_rect(colour = "black", fill=NA, size=1))
+}
+
+#visualize data
+umap_plot <- function(x, title){
+  x$kept <- factor(x$kept, levels = c("Kept", "low quality cells"))
+
+  pl <- DimPlot(
+    x,
+    pt.size = .5,
+    reduction = "umap",
+    group.by = "kept", 
+    cols= c("Kept" = "lightgrey", "low quality cells" = "royalblue1"),
+    order = c("low quality cells","Kept"),
+    ) +
+    theme_void() +
+    theme(legend.position = "none", panel.border = element_rect(colour = "black", fill=NA, size=1)) +
+    theme(
+      legend.position = "bottom",
+      legend.text = element_text(size = 16),
+      legend.direction = 'vertical',
+      ) +
+    labs(title = title,x="UMAP_1", y="UMAP_2") +
+    guides(colour = guide_legend(override.aes = list(size=5)))
+  
+  # pl[[1]]$layers[[1]]$aes_params$alpha = ifelse ( x@meta.data$kept == "Kept", 1, .2 )
+
+  return(pl)
+}
+
+
+#visualize data
+umap_plot_noleg <- function(x, title){
+  x$kept <- factor(x$kept, levels = c("Kept", "low quality cells"))
+
+  pl <- DimPlot(
+    x,
+    pt.size = .5,
+    reduction = "umap",
+    group.by = "kept", 
+    cols= c("Kept" = "lightgrey", "low quality cells" = "royalblue1"),
+    order = c("low quality cells","Kept"),
+    ) +
+    theme_void() +
+    theme(legend.position = "none", panel.border = element_rect(colour = "black", fill=NA, size=1)) +
+    theme(legend.position = "none") + 
+    labs(title = title,x="UMAP_1", y="UMAP_2") +
+    guides(colour = guide_legend(override.aes = list(size=5)))
+  
+  # pl[[1]]$layers[[1]]$aes_params$alpha = ifelse ( x@meta.data$kept == "Kept", 1, .2 )
+
+  return(pl)
+}
+```
+
+
+
+```{r}
+p1 <- umap_clusters(main_obj_pbmc1, "PBMC_1k_v3")
+p10 <- umap_clusters(main_obj_pbmc10, "PBMC_10k_v3")
+cise <- umap_clusters(main_obj_cise, "CISE13_5k_v2")
+n1 <- umap_clusters(main_obj_n1, "neuron_1k_v3")
+n5 <- umap_clusters(main_obj_n5, "neuron_5k_v3")
+
+p1_sd <- umap_plot_noleg(main_obj_list$main_obj_pbmc1_sd, "PBMC_1k_v3")
+p10_sd <- umap_plot_noleg(main_obj_list$main_obj_pbmc10_sd, "PBMC_10k_v3")
+cise_sd <- umap_plot_noleg(main_obj_list$main_obj_cise_sd, "CISE13_5k_v2")
+n1_sd <- umap_plot_noleg(main_obj_list$main_obj_n1_sd, "neuron_1k_v3")
+n5_sd <- umap_plot(main_obj_list$main_obj_n5_sd, "neuron_5k_v3")
+
+p1_mad <- umap_plot_noleg(main_obj_list$main_obj_pbmc1_mad, "PBMC_1k_v3")
+p10_mad <- umap_plot_noleg(main_obj_list$main_obj_pbmc10_mad, "PBMC_10k_v3")
+cise_mad <- umap_plot_noleg(main_obj_list$main_obj_cise_mad, "CISE13_5k_v2")
+n1_mad <- umap_plot_noleg(main_obj_list$main_obj_n1_mad, "neuron_1k_v3")
+n5_mad <- umap_plot(main_obj_list$main_obj_n5_mad, "neuron_5k_v3")
+
+p1_pca <- umap_plot_noleg(main_obj_pbmc1_pca, "PBMC_1k_v3")
+p10_pca <- umap_plot_noleg(main_obj_pbmc10_pca, "PBMC_10k_v3")
+cise_pca <- umap_plot_noleg(main_obj_cise_pca, "CISE13_5k_v2")
+n1_pca <- umap_plot_noleg(main_obj_n1_pca, "neuron_1k_v3")
+n5_pca <- umap_plot(main_obj_n5_pca, "neuron_5k_v3")
+
+```
+
+
+```{r}
+#All_plots <- CombinePlots(list(vis_umi, vis_gene, vis_mito, b))
+library(gridExtra)
+library(grid)
+res.dir <- paste0("~/01_data/Faezeh/prefilt_methods/")
+dir.create(res.dir) 
+ggsave(
+  grid.arrange(cowplot::plot_grid(p1_sd,p1_mad,p1_pca,p1,p10_sd,p10_mad,p10_pca,p10,cise_sd,cise_mad,cise_pca,cise,n1_sd,n1_mad,n1_pca,n1,n5_sd,n5_mad,n5_pca,n5,align = "h",ncol=4),
+               top=textGrob("", gp=gpar(fontsize=16,fontface="bold"), x = 0, hjust = 0)),
+  file=paste0(res.dir,"cutoff_methods_all.pdf"), width = 11, height=16
+  )
+```
+
+
+
+
+
+
+
+
+#find clusters before and after filtering
+```{r}
+check_cluster_umap <- function(x) {
+  data <- x 
+  data <- subset(data, idents = "cellranger")
+  data <- NormalizeData(object = data)
+  data <- ScaleData(data)
+  data <- FindVariableFeatures(data, selection.method = "vst", nfeatures = 2000)
+  data <- RunPCA(data)
+  data <- RunUMAP(data, dims = 1:15)
+  data <- FindNeighbors(data, dims = 1:15)
+  data <- FindClusters(data, resolution = 0.4)
+  return(data)
+}
+```
+
+```{r}
+pbmc1k_before <- check_cluster_umap(metadata_list$pbmc1k)
+pbmc1k_sd <- check_cluster_umap(data.filt.SD.pre.pbmc)
+pbmc1k_md <- check_cluster_umap(data.filt.MAD.pre.pbmc)
+pbmc1k_pca <- check_cluster_umap(data.filt.pca.pre.pbmc1)
+
+pbmc10k_before <- check_cluster_umap(metadata_list$pbmc10k)
+pbmc10k_sd <- check_cluster_umap(data.filt.SD.pre.pbmc10k)
+pbmc10k_md <- check_cluster_umap(data.filt.MAD.pre.pbmc10k)
+pbmc10k_pca <- check_cluster_umap(data.filt.pca.pre.pbmc10)
+
+neuron1k_before <- check_cluster_umap(metadata_list$neuron1kv3)
+neuron1k_sd <- check_cluster_umap(data.filt.SD.pre.neuron1kv3)
+neuron1k_md <- check_cluster_umap(data.filt.MAD.pre.neuron1kv3)
+neuron1k_pca <- check_cluster_umap(data.filt.pca.pre.n1)
+
+neuron5k_before <- check_cluster_umap(metadata_list$neuron_5k_v3)
+neuron5k_sd <- check_cluster_umap(data.filt.SD.pre.neuron5k_v3)
+neuron5k_md <- check_cluster_umap(data.filt.MAD.pre.neuron5k_v3)
+neuron5k_pca <- check_cluster_umap(data.filt.pca.pre.n5)
+
+cise_before <- check_cluster_umap(metadata_list$CISE13)
+cise_sd <- check_cluster_umap(data.filt.SD.pre.CISE13)
+cise_md <- check_cluster_umap(data.filt.MAD.pre.CISE13)
+cise_pca <- check_cluster_umap(data.filt.pca.pre.CISE13)
+
+```
+
+```{r}
+table(Idents(pbmc1k_before))
+```
+```{r}
+table(Idents(pbmc1k_sd))
+```
+```{r}
+
+table(Idents(pbmc1k_pca))
+
+```
+```{r}
+saveRDS(pbmc1k_before, "pbmc1k_before.rds")
+saveRDS(pbmc1k_sd, "pbmc1k_sd.rds")
+saveRDS(pbmc1k_md, "pbmc1k_md.rds")
+saveRDS(pbmc1k_pca, "pbmc1k_pca.rds")
+
+saveRDS(pbmc10k_before, "pbmc10k_before.rds")
+saveRDS(pbmc10k_sd, "pbmc10k_sd.rds")
+saveRDS(pbmc10k_md, "pbmc10k_md.rds")
+saveRDS(pbmc10k_pca, "pbmc10k_pca.rds")
+```
+
+```{r}
+# for(i in levels(pbmc1k_before$seurat_clusters)){
+#   print("---------------")
+#   print(i)
+#   print("---------------")
+#   for (j in levels(pbmc1k_after$seurat_clusters)){
+#     cells_before <- colnames(pbmc1k_before)[pbmc1k_before$seurat_clusters == i]
+#     cells_after <- colnames(pbmc1k_after)[pbmc1k_after$seurat_clusters == j]
+# 
+#     similar_pct <- round(sum(cells_before %in% cells_after) / length(cells_before) * 100, 1)
+#     
+#     print(sprintf("Cluster %s: %s", j, similar_pct))
+# 
+#   }
+# 
+#   
+# }
+```
+
+
+```{r}
+library(pheatmap)
+library(RColorBrewer)
+
+create_heatmap <- function(obj_before, obj_after, name_dataset) {
+  
+  # Define clusters
+  clusters_before <- levels(obj_before$seurat_clusters)
+  clusters_after <- levels(obj_after$seurat_clusters)
+  
+  # Create empty matrix
+  mat = matrix(nrow = length(clusters_before), ncol = length(clusters_after) + 1)
+
+  # Loop over clusters before and after
+  for(i in 1:length(clusters_before)){
+    
+    for (j in 1:length(clusters_after)){
+      
+      # Calculate similarity pct
+      cells_before <- colnames(obj_before)[obj_before$seurat_clusters == clusters_before[i]]
+      cells_after <- colnames(obj_after)[obj_after$seurat_clusters == clusters_after[j]]
+      similar_pct <- round(sum(cells_before %in% cells_after) / length(cells_before) * 100, 0)
+      
+      # Add similarity pct to matrix
+      mat[i, j + 1] <- similar_pct
+      
+    }
+    
+    # Calculate total removed
+    mat[i, 1] <- sum(mat[i,1:length(clusters_after) + 1])
+  }
+  
+  # Convert to dataframe and add cluster names
+  df <- as.data.frame(mat)
+  rownames(df) <- clusters_before
+  colnames(df) <- c("sum", clusters_after)
+  
+  # Change color
+  paletteLength <- 100
+  # myColor <- colorRampPalette(c("darkblue", "darkgreen"))(paletteLength)
+  # Convert zero to NA so that 0 is not displayed
+  # df_zero_to_na <- df
+  # df_zero_to_na[df_zero_to_na == 0] <- ""
+  # df_zero_to_na$sum[df_zero_to_na$sum == ""] <- 0 # for sum convert na back to zero
+
+  my_heatmap <- pheatmap(df,
+                         display_numbers=TRUE,
+                         cluster_rows=FALSE,
+                         cluster_cols=FALSE,
+                         border_color=FALSE,
+                         main=name_dataset,
+                         breaks=seq(1, paletteLength, 1),
+                         number_format="%1.f",
+                         angle_col=0,
+                         gaps_col=1,
+                         number_color="black",
+                         fontsize_number=12)
+  
+ return(my_heatmap)
+}
+
+
+```
+
+
+```{r}
+p1_sd <- create_heatmap(pbmc1k_before, pbmc1k_sd, name_dataset = "PBMC_1k_v3")
+p1_md <- create_heatmap(pbmc1k_before, pbmc1k_md, name_dataset = "PBMC_1k_v3")
+p1_pca <- create_heatmap(pbmc1k_before, pbmc1k_pca, name_dataset = "PBMC_1k_v3")
+
+p10_sd <- create_heatmap(pbmc10k_before, pbmc10k_sd, name_dataset = "PBMC_10k_v3")
+p10_md <- create_heatmap(pbmc10k_before, pbmc10k_md, name_dataset = "PBMC_10k_v3")
+p10_pca <- create_heatmap(pbmc10k_before, pbmc10k_pca, name_dataset = "PBMC_10k_v3")
+
+n1_sd <- create_heatmap(neuron1k_before, neuron1k_sd, name_dataset = "neuron_1k_v3")
+n1_md <- create_heatmap(neuron1k_before, neuron1k_md, name_dataset = "neuron_1k_v3")
+n1_pca <- create_heatmap(neuron1k_before, neuron1k_pca, name_dataset = "neuron_1k_v3")
+
+
+n5_sd <- create_heatmap(neuron5k_before, neuron5k_sd, name_dataset = "neuron_5k_v3")
+n5_md <- create_heatmap(neuron5k_before, neuron5k_md, name_dataset = "neuron_5k_v3")
+n5_pca <- create_heatmap(neuron5k_before, neuron5k_pca, name_dataset = "neuron_5k_v3")
+
+ci_sd <- create_heatmap(cise_before, cise_sd, name_dataset = "CISE13_5k_v3")
+ci_md <- create_heatmap(cise_before, cise_md, name_dataset = "CISE13_5k_v3")
+ci_pca <- create_heatmap(cise_before, cise_pca, name_dataset = "CISE13_5k_v3")
+
+```
+
+
+```{r}
+library(ggplotify)
+p1_sd <- as.ggplot(p1_sd)
+p1_md <- as.ggplot(p1_md)
+p1_pca <- as.ggplot(p1_pca)
+p10_sd <- as.ggplot(p10_sd)
+p10_md <- as.ggplot(p10_md)
+p10_pca <- as.ggplot(p10_pca)
+n1_sd <- as.ggplot(n1_sd)
+n1_md <- as.ggplot(n1_md)
+n1_pca <- as.ggplot(n1_pca)
+n5_sd <- as.ggplot(n5_sd)
+n5_md <- as.ggplot(n5_md)
+n5_pca <- as.ggplot(n5_pca)
+ci_sd <- as.ggplot(ci_sd)
+ci_md <- as.ggplot(ci_md)
+ci_pca <- as.ggplot(ci_pca)
+
+
+library(gridExtra)
+library(grid)
+res.dir <- paste0("~/01_data/Faezeh/prefilt_methods/")
+dir.create(res.dir) 
+
+library(patchwork)
+plt1 <- cowplot::plot_grid(p1_sd,p10_sd,ci_sd,n1_sd,n5_sd, align = "h", ncol=1)
+plt1 <- plt1 + plot_annotation(title="Gaussian mixture", theme = theme(plot.title = element_text(hjust = 0.5)))
+plt1
+
+plt2 <- cowplot::plot_grid(p1_md,p10_md,ci_md,n1_md,n5_md, align = "h", ncol=1)
+plt2 <- plt2 + plot_annotation(title="MADs", theme = theme(plot.title = element_text(hjust = 0.5)))
+plt2
+
+plt3 <- cowplot::plot_grid(p1_pca,p10_pca,ci_pca,n1_pca,n5_pca, align = "h", ncol=1)
+plt3 <- plt2 + plot_annotation(title="PCA", theme = theme(plot.title = element_text(hjust = 0.5)))
+plt3
+
+ggsave(grid.arrange(cowplot::plot_grid(plt1, plt2,plt3, align = "h",ncol=3)),file=paste0(res.dir,"heatmap_filtering_methods_cluster_all_test.pdf"), width=15.5, height=15.5)
+
+# ggsave(
+#   grid.arrange(cowplot::plot_grid(p1_sd,p1_md,p1_pca,p10_sd,p10_md,p10_pca,ci_sd,ci_md,ci_pca,n1_sd,n1_md,n1_pca,n5_sd,n5_md,n5_pca, align = "h",ncol=3)
+#                ),
+#   file=paste0(res.dir,"heatmap_filtering_methods_cluster_all.pdf"), width=14.5, height=14)
+
+# ggsave(grid.arrange(arrangeGrob(p1_sd,p10_sd,ci_sd,n1_sd,n5_sd, top = "Gaussian mixture"),arrangeGrob(p1_md,p10_md,ci_md,n1_md,n5_md, top = "MADs"),arrangeGrob(p1_pca,p10_pca,ci_pca,n1_pca,n5_pca, top = "PCA"), ncol=3, nrow=5),
+#        file=paste0(res.dir,"heatmap_filtering_methods_cluster_all_test.pdf"), width=14.5, height=14)
+```
+
+
+#neuron 5k for visualization all methods
+```{r}
+metadata <- subset(metadata_list$neuron_5k_v3, idents="cellranger")
+metadata <- metadata@meta.data
+```
+
+
+```{r}
+
+library(mixtools)
+outlier_Histogram_gm <- function(data, x, sigmas = 1:3, bins = 50,
+                             show_zero = FALSE) {
+  x_data <- data[, x]
+  
+  mixmdl = normalmixEM(x_data, k=2,maxit=10000,epsilon=1e-08, maxrestarts = 1000)
+  mu <- mixmdl$mu[2]
+  sigma <- mixmdl$sigma[2]
+  # mu <- mean(x_data)
+  # sigma <- sd(x_data)
+  
+  outs <- lapply(sigmas, function(n) {
+    lower  <- mu - n * sigma
+    higher <- mu + n * sigma
+    n_low  <- sum(x_data < lower)
+    n_high <- sum(x_data > higher)
+    
+    list(n = n, lower = lower, higher = higher,
+         n_low = n_low, n_high = n_high)
+  })
+  sdnorm =
+    function(x, mean=0, sd=1, lambda=1){lambda*dnorm(x, mean=mean, sd=sd)}
+  
+  gg <- ggplot(data, aes(x = !!ensym(x))) +
+    geom_histogram(bins = 50, color = "black", fill = "gray",  
+                   aes(y=..density.., fill=..count..)) +
+    geom_vline(xintercept = mu, colour = "blue", linetype = "dashed") +
+    annotate("text", x = mu, y = Inf, label = "Mean", colour = "blue",
+             angle = 90, hjust = 1, vjust = -0.5) +
+    stat_function(fun=sdnorm,args=list(mean=mixmdl$mu[1],sd=mixmdl$sigma[1], lambda=mixmdl$lambda[1]), color ="black")+
+    stat_function(fun=sdnorm,args=list(mean=mixmdl$mu[2],sd=mixmdl$sigma[2], lambda=mixmdl$lambda[2]),color =  "black")+
+    theme_minimal() +
+    ylab("density")+
+    theme(legend.position = "none")+
+    ggtitle("")
+  
+  
+  for (i in seq_along(outs)) {
+    out <- outs[[i]]
+    
+    if (show_zero) {
+      show_low  <- TRUE
+      show_high <- TRUE
+    } else {
+      show_low  <- out$n_low > 0
+      show_high <- out$n_high > 0
+    }
+    
+    if (show_low) {
+      gg <- gg +
+        geom_vline(xintercept = out$lower, colour = "red", linetype = "dashed") +
+        annotate("text", x = out$lower, y = Inf,
+                 label = paste0(out$n, " SD"), colour = "red",
+                 angle = 90, hjust = 1, vjust = -0.5)
+        # annotate("text", x = out$lower, y = Inf,
+        #          label = paste0(round(out$lower, 3),
+        #                         " (", out$n_low, " lower)"),
+        #          colour = "red", angle = 90, hjust = 1, vjust = -0.5)
+    }
+    
+    
+    # if (show_high) {
+    #   gg <- gg +
+    #     geom_vline(xintercept = out$higher, colour = "red", linetype = "dashed") +
+    #     annotate("text", x = out$higher, y = 0,
+    #              label = paste0(out$n, "SD"), colour = "red",
+    #              angle = 90, hjust = -0.1, vjust = -0.5) +
+    #     annotate("text", x = out$higher, y = Inf,
+    #              label = paste0(round(out$higher, 3),
+    #                             " (", out$n_high, " higher)"),
+    #              colour = "red", angle = 90, hjust = 1, vjust = -0.5)
+    # }
+  }
+  
+  
+  return(gg)
+}
+
+
+```
+
+
+```{r}
+#p_gm_gene <- outlier_Histogram_gm(metadata, "log10nGene", sigmas = c(2,2.5, 3, 4)); p_gm_gene
+p_gm_umi <- outlier_Histogram_gm(metadata, "log10nUMI", sigma = c(2,2.5, 3, 4))+ggtitle("Gaussian mixture"); p_gm_umi
+```
+```{r}
+outlierHistogram <- function(data, x, mads = 1:3, bins = 50,
+                             show_zero = FALSE) {
+  x_data <- data[, x]
+  med    <- median(x_data)
+  MAD    <- mad(x_data, center = med, na.rm = TRUE)
+  
+  outs <- lapply(mads, function(n) {
+    lower  <- med - n * MAD
+    higher <- med + n * MAD
+    n_low  <- sum(x_data < lower)
+    n_high <- sum(x_data > higher)
+
+    list(n = n, lower = lower, higher = higher,
+         n_low = n_low, n_high = n_high)
+    
+  })
+    gg <- ggplot(data, aes(x = !!ensym(x))) +
+      geom_histogram(bins = 50, color = "black", fill = "gray"
+                     )+ #aes(y=..density.., fill=..count..) inside of geom_histogram
+      geom_vline(xintercept = med, colour = "blue", linetype = "dashed") +
+      annotate("text", x = med, y = Inf, label = "Median", colour = "blue",
+               angle = 90, hjust = 1, vjust = -0.5) +
+      theme_minimal() +
+      ylab("frequency")+
+      theme(legend.position = "none")+
+      ggtitle("")
+      # stat_function(fun=dnorm, color="red", args=list(mean=mean(x_data),
+      #                                                     sd=sd(x_data)))
+    
+    for (i in seq_along(outs)) {
+      out <- outs[[i]]
+      
+      if (show_zero) {
+        show_low  <- TRUE
+        show_high <- TRUE
+      } else {
+        show_low  <- out$n_low > 0
+        show_high <- out$n_high > 0
+      }
+      
+      if (show_low) {
+        gg <- gg +
+          geom_vline(xintercept = out$lower, colour = "red", linetype = "dashed") +
+          annotate("text", x = out$lower, y = Inf,
+                   label = paste0(out$n, " MADs"), colour = "red",
+                   angle = 90, hjust = 1, vjust = -0.5) 
+
+      }
+      
+  }
+    
+    return(gg)
+  }
+
+```
+
+```{r}
+
+p_mad_umi <- outlierHistogram(metadata, "log10nUMI", mads = c(2, 3, 4))+labs(y = "density")+ggtitle("MADs");p_mad_umi
+```
+
+```{r}
+data.filt.pca.pre.n5 <- pca_outlier(metadata_list$neuron_5k_v3)
+```
+
+```{r}
+#data.filt.pca <- as.SingleCellExperiment(main_obj_n5_pca)
+
+```
+
+```{r}
+main_obj_n5_pca$kept <- factor(main_obj_n5_pca$kept, levels = c("low quality cells", "Kept"))
+pca <- DimPlot(main_obj_n5_pca, reduction = "pca", group.by = "kept", pt.size = 2, order = c("low quality cells", "Kept"))+theme_bw()+
+  theme(legend.justification = c(0,1), legend.position = c(0,1), legend.background = element_rect(fill = NA), legend.text = element_text(size = 15))+ggtitle("PCA")+
+    scale_colour_manual(values = c("grey50","red")); pca
+```
+```{r}
+library(gridExtra)
+library(grid)
+res.dir <- paste0("~/01_data/Faezeh/prefilt_methods/")
+dir.create(res.dir) 
+ggsave(
+  grid.arrange(cowplot::plot_grid(p_gm_umi,p_mad_umi,pca,align = "hv",ncol=3),
+               top=textGrob("", gp=gpar(fontsize=16,fontface="bold"), x = 0, hjust = 0)),
+  file=paste0(res.dir,"example_methods_filtering_neuron5k.pdf"), width = 13, height=5
+  )
+```
+
+
+```{r}
+data.filt.pca$kept <- factor(data.filt.pca$kept, levels = c("Kept", "low quality cells"))
+
+plotReducedDim(data.filt.pca, "PCA", colour_by = "kept")+
+  geom_point(alpha = 0.001)+
+    scale_colour_manual(values = c("grey60", "red"))
+```
+
+
+```{r}
+kept_pca <- data.filt.pca$kept == "low quality cells"
+colData(data.filt.pca)$Kept_2 <- kept_pca
+colData(data.filt.pca)$Kept_2[kept_pca] <- "pca"
+
+plot_data <- reducedDim(data.filt.pca, "PCA") %>%
+    as.data.frame() %>%
+    mutate(Removed = "Kept") %>%
+    mutate(Removed = if_else(!kept_pca, "pca", Removed)) %>%
+    mutate(Removed = factor(Removed, levels = c("pca", "Kept"),
+                            labels = c("pca", "Kept")))
+```
+
+```{r}
+pca_plot <- ggplot(plot_data, aes(x = PC_1, y = PC_2, colour = Removed)) +
+    geom_point(alpha = 0.3) +
+    scale_colour_manual(values = c("#F47920", "grey50"),
+                        name = "Removed by") +
+    ggtitle("PCA based cell filtering") +
+    theme_minimal() +
+    theme(legend.position = "bottom");pca_plot
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# EXTRA diagplot
+```{r}
+diagplot <-function(object,reduction,metric){
+  
+   data <- Embeddings(object = object[[reduction]])
+   data <- as.data.frame(x = data)
+   
+   assay <- DefaultAssay(object=object)
+   
+   if(assay=="RNA"){
+ 
+     method= "log-normalization"
+   }
+   
+   if(assay=="SCT"){
+     method="sctransform"
+   }
+
+   data$log10nUMI <- log10(FetchData(object,vars="nUMI"))[[1]]
+   data$log10nGene <- log10(FetchData(object,vars="nGene"))[[1]]
+   data$pctMito <- FetchData(object,vars="pct_mt")[[1]]
+
+   log10nUMI <- data[order(-data$log10nUMI),]$log10nUMI
+   log10nGene <- data[order(-data$log10nGene),]$log10nGene
+   pctMito <- data[order(-data$pctMito),]$pctMito
+   
+   
+   PC_1 <- FetchData(object, vars="PC_1")[[1]]
+
+   
+   if(metric=="umi"){
+     if(reduction=="pca"){
+       p <- ggplot() +
+         geom_point(aes(x=PC_1,y=PC_2, colour=log10nUMI), data=data[order(-data$log10nUMI),], size=2, shape=20)
+     }
+     if(reduction=="tsne"){
+       p <- ggplot() +
+         geom_point(aes(x=tSNE_1,y=tSNE_2, colour=log10nUMI), data=data[order(-data$log10nUMI),], size=2, shape=20)
+     }
+     if(reduction=="umap"){
+       p <- ggplot() +
+         geom_point(aes(x=UMAP_1,y=UMAP_2, colour=log10nUMI), data=data[order(-data$log10nUMI),], size=2, shape=20)
+     }
+     
+     p <- p + scale_colour_gradientn(colours = c("darkblue","darkgreen","green","yellow")) +
+       ggtitle(paste0("log10UMI  (",reduction,")\n")) +
+       theme_classic() +
+       theme(plot.title = element_text(hjust = 0.5), legend.position = "bottom",
+                  legend.title = element_blank(),legend.text = element_text(color = "black", size = 8))
+
+   }
+    if(metric=="Gene"){
+      if(reduction=="pca"){
+        p <- ggplot() +
+          geom_point(aes(x=PC_1,y=PC_2, colour=log10nGene), data=data[order(-data$log10nGene),], size=2, shape=20)
+      }
+      if(reduction=="tsne"){
+        p <- ggplot() +
+          geom_point(aes(x=tSNE_1,y=tSNE_2, colour=log10nGene), data=data[order(-data$log10nGene),], size=2, shape=20)
+      }
+      if(reduction=="umap"){
+        p <- ggplot() +
+          geom_point(aes(x=UMAP_1,y=UMAP_2, colour=log10nGene), data=data[order(-data$log10nGene),], size=2, shape=20)
+      }
+      p <- p + scale_colour_gradientn(colours = c("darkblue","darkgreen","green","yellow")) +
+        ggtitle(paste0("log10Gene  (",reduction,")\n")) +
+        theme_classic() +
+        theme(plot.title = element_text(hjust = 0.5), legend.position = "bottom",
+                  legend.title = element_blank(),legend.text = element_text(color = "black", size = 8))
+    }
+    if(metric=="pct_mitochondrial"){
+      if(reduction=="pca"){
+        p <- ggplot() +
+          geom_point(aes(x=PC_1,y=PC_2, colour=pctMito), data=data, size=2, shape=20)
+      }
+      if(reduction=="tsne"){
+        p <- ggplot() +
+          geom_point(aes(x=tSNE_1,y=tSNE_2, colour=pctMito), data=data, size=2, shape=20)
+      }
+      if(reduction=="umap"){
+        p <- ggplot() +
+          geom_point(aes(x=UMAP_1,y=UMAP_2, colour=pctMito), data=data, size=2, shape=20)
+      }
+      p <- p + scale_colour_gradientn(colours = c("yellow","green","darkgreen","darkblue")) +
+        ggtitle(paste0("pct_mitochondrial  (",reduction,")\n")) +
+        theme_classic() +
+        theme(plot.title = element_text(hjust = 0.5), legend.position = "bottom",
+                  legend.title = element_blank(),legend.text = element_text(color = "black", size = 8))
+    }
+
+   return(p)
+ }
+```
+
+
+```{r}
+head(subset_cr[["umap"]]@cell.embeddings)
+```
+
+```{r}
+subset_cr
+```
+
+```{r}
+vis_umi <- diagplot(subset_cr,'umap','umi')
+vis_umi
+```
+
+
+
+
+
+```{r}
+
+vis_gene <- diagplot(subset_cr,'umap','Gene')
+vis_gene
+```
+```{r}
+vis_mito <- diagplot(subset_cr,'umap','pct_mitochondrial')
+vis_mito
+```
