@@ -1,0 +1,1972 @@
+---
+title: "All_data_Doubletdetection_methods"
+output: html_document
+---
+#Datasets:
+All datasets with applied HTO demux seurat and plus filter data regarding 3 metrics (quality control):
+1)8HTO
+2)12HTO
+3)amazon dataset with 4HTO https://rnabioco.github.io/cellar/7_multimodal.html : DONE
+4)test HTO dataset https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE126310 (data was used for citefuse paper: ctrl and CTCL: only ctrl used now)
+5)https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE108313 (data was from doubletfinder paper)
+5b)https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE108313 (mixcelllines) ***should be removed.
+6)https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE152981 (data was from another doublet detection method)
+7)https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE156718 (mouse dataset) 
+
+8)https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE164378 (new): it has 2 libraries
+9)https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE128879 (new)
+10)https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE158702 (new/maybe) : we dont use, the hto is not available.
+
+I have downloaded all of these data in this dir /HTO_datasets_dl
+
+#prepare datasets:
+https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE152981 (data was from another doublet detection method)
+this data was prepared in hto_dataset.Rmd and save it as this id in the same home directory.
+
+https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE108313 (data was from doubletfinder paper)
+this data was prepared in hto_dataset.Rmd and save it as this id in the same home directory.
+
+https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE156718 (mouse dataset)
+this data was prepared in hto_dataset.Rmd and save it as this id in the same home directory.
+
+https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE126310 ctrl (citefuse) 
+this data was prepared in hto_dataset.Rmd and save it as this id in the same home directory.
+
+https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE108313 (mixcelllines)
+this data was prepared in hto_dataset.Rmd and save it as this id in the same home directory. ***it should be removed
+
+https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE128879
+this data was prepared in hto_dataset.Rmd and save it as this id in the same home directory.
+
+https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE164378 (new): it has 2 libraries
+these two data was prepared in hto_dataset.Rmd and save it as this id in the same home directory.
+```{r, setup, include=FALSE}
+knitr::opts_knit$set(root.dir = '~/01_data/Faezeh/HTO_datasets_dl/')
+#knitr::opts_knit$set(root.dir = '/home/rstudio/01_input/Faezeh/HTO_datasets_dl')
+
+#knitr::opts_knit$set(root.dir = '/home/faezeh/Documents/aws_copy_Faezeh/Faezeh/HTO_datasets_dl/')
+#knitr::opts_knit$set(root.dir = '~/aws_copy_Faezeh/Faezeh/HTO_datasets_dl/')
+```
+
+#create dgCMatrix of all seurat objects(prepared datasets)
+```{r}
+setwd("~/01_data/Faezeh/HTO_datasets_dl/")
+library(stringr)
+
+#my_obj <- c("CITEseq_amazon_test_filt_label_cells.rds", "GSE108313_filt_label_cells.rds", "GSE108313_mixcelllines_filt_label_cells.rds","GSE126310_ctrl_filt_label_cells.rds", "GSE152981_filt_label_cells.rds", "GSE156718_filt_label_cells.rds", "pbmc_hto12_10x_filt_label_cells.rds", "pbmc_hto8_10x_filt_label_cells.rds")
+
+####new datasets:
+# my_obj <- c("CITEseq_amazon_test_filt_label_cells.rds", "GSE126310_ctrl_filt_label_cells.rds", "GSE152981_filt_label_cells.rds", "GSE156718_filt_label_cells.rds", "pbmc_hto12_10x_filt_label_cells.rds", "pbmc_hto8_10x_filt_label_cells.rds", "GSE128879_filt_label_cells.rds", "GSE164378_CITE_filt_label_cells.rds", "GSE164378_CECITE_filt_label_cells.rds")
+
+my_obj <- c("GSE128879_filt_label_cells.rds", "GSE164378_CITE_filt_label_cells.rds", "GSE164378_CECITE_filt_label_cells.rds")
+
+for(obj in my_obj){
+  
+  #read data
+  data <- readRDS(obj)
+  
+  data_list <- vector("list", length=2)
+  data_list[[1]] <- data@assays$RNA@counts
+  data_list[[2]] <- unname(data$HTO_classification.global)
+
+  
+  saveRDS(data_list, paste0(str_split(obj, ".rds")[[1]][1], "_matrix.rds"))
+
+}
+```
+
+#Methods:
+INPUT:dgCMatrix of datasets(labeled cells with doublet and singlets, removed negative and bad quality cells- filtered)
+1)first applying seurat Demux function and 2)then apply quality control/filtering and 3)finally remove negative cells.
+
+##doubletFinder
+```{r}
+
+#library(Matrix)
+library(Seurat)
+library(DoubletFinder)
+library(PRROC)
+library(pROC)
+library(pbapply)
+
+
+##############################################################
+# calculate doublet score on 8 benchmark datasets
+##############################################################
+# list to save doublet scores
+score.list <- list()
+
+# read real data from local
+# change the location accordingly
+locs <- c("GSE164378_CITE_filt_label_cells_matrix.rds", "GSE164378_CECITE_filt_label_cells_matrix.rds","CITEseq_amazon_test_filt_label_cells_matrix.rds", "GSE126310_ctrl_filt_label_cells_matrix.rds", "GSE152981_filt_label_cells_matrix.rds", "GSE156718_filt_label_cells_matrix.rds", "pbmc_hto12_10x_filt_label_cells_matrix.rds", "pbmc_hto8_10x_filt_label_cells_matrix.rds", "GSE128879_filt_label_cells_matrix.rds")
+# loop over each dataset
+
+for(loc in locs){
+  # loc <- locs[i]
+  # print(loc)
+  data <- readRDS(loc)
+  count <- data[[1]]; dim(count)
+  label <- data[[2]]; table(label)
+  label <- ifelse(label == 'Doublet', 1, 0); table(label)
+  doublet.rate <- sum(label==1) / length(label); doublet.rate
+  
+  # doubletfinder
+  system.time({
+  ## Pre-process Seurat object (standard) --------------------------------------------------------------------------------------
+  doublet.seurat <- CreateSeuratObject(counts = count, project = "Doublet", min.cells = 1); doublet.seurat
+  doublet.seurat <- NormalizeData(doublet.seurat)
+  doublet.seurat <- ScaleData(doublet.seurat)
+  doublet.seurat <- FindVariableFeatures(doublet.seurat, selection.method = "vst", nfeatures = 2000)
+  doublet.seurat <- RunPCA(doublet.seurat)
+  
+  ## pK Identification (no ground-truth) ---------------------------------------------------------------------------------------
+  sweep.res.doublet <- paramSweep_v3(doublet.seurat, PCs = 1:10, sct = FALSE)
+  sweep.stats.doublet <- summarizeSweep(sweep.res.doublet, GT = FALSE)
+  bcmvn.doublet <- find.pK(sweep.stats.doublet)
+  pK <- bcmvn.doublet$pK[which.max(bcmvn.doublet$BCmetric)]; pK <- as.numeric(levels(pK))[pK]; pK
+  doublet.seurat <- doubletFinder_v3(doublet.seurat, PCs = 1:10, pN = 0.25, pK = pK, nExp = sum(label==1))
+  attribute <- paste('pANN', 0.25, pK, sum(label==1), sep = '_'); attribute
+  })
+  score <- doublet.seurat@meta.data[[attribute]]
+  score.list <- append(score.list, list(score))
+  # calculate auprc and auroc
+  fg <- score[label==1]
+  bg <- score[label==0]
+  pr <- pr.curve(scores.class0 = fg, scores.class1 = bg, curve = T); pr$auc.integral
+  roc <- roc.curve(scores.class0 = fg, scores.class1 = bg, curve = T); roc$auc
+  # prs[i] <- pr$auc.integral
+  # rocs[i] <- roc$auc
+}
+saveRDS(score.list, 'result_df_NEW/doubletfinder_all_data_score_list.rds')
+```
+
+# scDblFinder
+```{r}
+library(Matrix)
+library(Seurat)
+library(SingleCellExperiment)
+library(scDblFinder)
+library(scran)
+library(PRROC)
+library(pbapply)
+
+
+##############################################################
+# calculate doublet score on 8 benchmark datasets
+##############################################################
+# list to save doublet scores
+score.list <- list()
+
+# read real data from local
+# change the location accordingly
+locs <- c("GSE164378_CITE_filt_label_cells_matrix.rds", "GSE164378_CECITE_filt_label_cells_matrix.rds","CITEseq_amazon_test_filt_label_cells_matrix.rds", "GSE126310_ctrl_filt_label_cells_matrix.rds", "GSE152981_filt_label_cells_matrix.rds", "GSE156718_filt_label_cells_matrix.rds", "pbmc_hto12_10x_filt_label_cells_matrix.rds", "pbmc_hto8_10x_filt_label_cells_matrix.rds", "GSE128879_filt_label_cells_matrix.rds")
+# loop over each dataset
+for(loc in locs){
+  data <- readRDS(loc)
+  count <- data[[1]]; dim(count)
+  label <- data[[2]]; table(label)
+  label <- ifelse(label == 'Doublet', 1, 0); table(label)
+  doublet.rate <- sum(label==1) / length(label); doublet.rate
+  
+  # scDblFinder
+  system.time({
+  sce <- SingleCellExperiment(list(counts=count))
+  sce <- scDblFinder(sce)}) #doubletCells(count) be depricated. #scDblFinder(sce)
+  score <- sce$scDblFinder.score
+  score.list <- append(score.list, list(score))
+  
+  # calculate auprc and auroc
+  fg <- score[label==1]
+  bg <- score[label==0]
+  pr <- pr.curve(scores.class0 = fg, scores.class1 = bg, curve = T); pr$auc.integral
+  roc <- roc.curve(scores.class0 = fg, scores.class1 = bg, curve = T); roc$auc
+}
+saveRDS(score.list, 'result_df_NEW/scDblFinder_all_data_score_list.rds')
+
+```
+
+
+# Create barplot
+
+```{r}
+library(dplyr)
+library(ggplot2)
+
+GSE152981_filt_label_cells_matrix[[2]] <- factor(GSE152981_filt_label_cells_matrix[[2]], levels = c("Doublet", "Singlet"))
+
+data_list <- list(
+  CITEseq_amazon_test_filt_label_cells_matrix[[2]], 
+  GSE126310_ctrl_filt_label_cells_matrix[[2]],
+  GSE128879_filt_label_cells_matrix[[2]],
+  GSE152981_filt_label_cells_matrix[[2]],
+  GSE156718_filt_label_cells_matrix[[2]],
+  GSE164378_CECITE_filt_label_cells_matrix[[2]],
+  GSE164378_CITE_filt_label_cells_matrix[[2]],
+  pbmc_hto12_10x_filt_label_cells_matrix[[2]],
+  pbmc_hto8_10x_filt_label_cells_matrix[[2]]
+)
+
+df_list <- lapply(data_list, function(x) as.data.frame(table(x)))
+df_list <- lapply(df_list, function(x) {
+  
+  rownames(x) <- x$x
+  x$x <- NULL
+
+  return(x)
+})
+
+print(df_list)
+
+df_names <- c(
+  "CITEseq_PBMC_4HTO",
+  "GSE126310_ctrl",
+  "GSE128879",
+  "GSE152981",
+  "GSE156718",
+  "GSE164378_CECITE",
+  "GSE164378_CITE",
+  "MIX_12HTO_10x",
+  "PBMC_8HTO_10x"
+  )
+
+i = 1
+for (df in df_list) {
+  colnames(df) <- df_names[[i]]
+  
+
+  df_list[[i]] <- df
+  i = i + 1
+}
+
+ggdata <- dplyr::bind_cols(df_list)
+ggdata <- ggdata[, c("GSE164378_CITE", "GSE164378_CECITE", "CITEseq_PBMC_4HTO", 
+                   "GSE126310_ctrl", "GSE152981", "GSE156718", 
+                   "MIX_12HTO_10x", "PBMC_8HTO_10x", "GSE128879")]
+print(ggdata)
+ggdata <- as.data.frame(t(ggdata))
+ggdata_unstack <- ggdata
+ggdata <- stack(ggdata)
+ggdata$dataset <- c(c("GSE164378_CITE", "GSE164378_CECITE", "CITEseq_PBMC_4HTO", 
+                   "GSE126310_ctrl", "GSE152981", "GSE156718", 
+                   "MIX_12HTO_10x", "PBMC_8HTO_10x", "GSE128879"), c("GSE164378_CITE", "GSE164378_CECITE", "CITEseq_PBMC_4HTO", 
+                   "GSE126310_ctrl", "GSE152981", "GSE156718", 
+                   "MIX_12HTO_10x", "PBMC_8HTO_10x", "GSE128879"))
+
+ggdata$dataset <- factor(ggdata$dataset, levels = c("GSE164378_CITE", "GSE164378_CECITE", "CITEseq_PBMC_4HTO", 
+                   "GSE126310_ctrl", "GSE152981", "GSE156718", 
+                   "MIX_12HTO_10x", "PBMC_8HTO_10x", "GSE128879"))
+print(ggdata)
+```
+
+```{r}
+ggplot(ggdata, aes(x = dataset, y = values, fill = ind)) +
+  geom_bar(position="dodge", stat="identity") + 
+  theme_bw() +
+  labs(x=NULL, y="Number of cells") +
+  theme(text = element_text(size=18))+theme(legend.title = element_blank())+ theme(text = element_text(size=18))+ theme(axis.text.x = element_text(angle = 90))+theme(legend.justification = c(1,1), legend.position = c(1,1), legend.background = element_rect(fill = NA))
+ggsave(
+  file = paste0("/home/rstudio/01_data/Faezeh/HTO_datasets_dl/result_df_NEW/doublet_singlet_numbers_all_datasets.pdf"), width = 8, height = 6
+)
+```
+
+```{r}
+ggdata_unstack$prop_doublet <- round(ggdata_unstack$Doublet / (ggdata_unstack$Singlet + ggdata_unstack$Doublet) * 100, 1)
+ggdata_unstack$prop_singlet <- round(ggdata_unstack$Singlet / (ggdata_unstack$Singlet + ggdata_unstack$Doublet) * 100, 1)
+
+ggdata_unstack$dataset <- rownames(ggdata_unstack)
+ggdata_final <- dplyr::left_join(ggdata, ggdata_unstack, by="dataset")
+ggdata_final$prop_combine <- NA
+ggdata_final$prop_combine[ggdata_final$ind == "Doublet"] <- ggdata_final$prop_doublet[ggdata_final$ind == "Doublet"]
+ggdata_final$prop_combine[ggdata_final$ind == "Singlet"] <- ggdata_final$prop_singlet[ggdata_final$ind == "Singlet"]
+ggdata_final
+```
+
+
+```{r}
+ggdata_final[ggdata_final$dataset == "GSE164378_CITE",]
+```
+
+```{r}
+ggdata_final$dataset <- c(c("GSE164378_CITE", "GSE164378_CECITE", "CITEseq_PBMC_4HTO", 
+                   "GSE126310_ctrl", "GSE152981", "GSE156718", 
+                   "MIX_12HTO_10x", "PBMC_8HTO_10x", "GSE128879"), c("GSE164378_CITE", "GSE164378_CECITE", "CITEseq_PBMC_4HTO", 
+                   "GSE126310_ctrl", "GSE152981", "GSE156718", 
+                   "MIX_12HTO_10x", "PBMC_8HTO_10x", "GSE128879"))
+
+ggdata_final$dataset <- factor(ggdata_final$dataset, levels = c("GSE164378_CITE", "GSE164378_CECITE", "CITEseq_PBMC_4HTO", 
+                   "GSE126310_ctrl", "GSE152981", "GSE156718", 
+                   "MIX_12HTO_10x", "PBMC_8HTO_10x", "GSE128879"))
+```
+
+
+```{r}
+p_prop <- ggplot(ggdata_final, aes(x=dataset, y=prop_combine, fill=ind)) +
+  geom_col() +
+  geom_text(aes(label = paste0(prop_combine,"%")), position = position_stack(vjust = 0.5)) +
+  theme_bw() + 
+  labs(x=NULL, y="Proportion of cells") +
+  theme(text = element_text(size=18), legend.title = element_blank(), axis.text.x = element_text(angle = 90), legend.background = element_rect(fill = NA), legend.position = "none")
+        
+p_prop 
+```
+
+```{r}
+p_nr <- ggplot(ggdata, aes(x = dataset, y = values, fill = ind)) +
+  geom_bar(position="dodge", stat="identity") + 
+  theme_bw() +
+  labs(x=NULL, y="Number of cells") +
+  theme(text = element_text(size=18))+theme(legend.title = element_blank())+ theme(text = element_text(size=18))+ theme(axis.text.x = element_text(angle = 90))+theme(legend.justification = c(1,1), legend.position = c(1,1), legend.background = element_rect(fill = NA))
+p_nr
+```
+
+```{r}
+res.dir <- paste0("result_df_NEW/")
+dir.create(res.dir) 
+ggsave(
+  grid.arrange(cowplot::plot_grid(p_nr,p_prop, align = "h",ncol=2)
+               ),
+  file=paste0(res.dir,"doublet_singlet_numbers_proportion_all.pdf"), width = 12, height=6
+  )
+```
+
+
+
+# doubletCells
+```{r}
+library(Matrix)
+library(Seurat)
+library(SingleCellExperiment)
+library(scDblFinder)
+library(scran)
+library(PRROC)
+library(pbapply)
+
+
+##############################################################
+# calculate doublet score on 8 benchmark datasets
+##############################################################
+# list to save doublet scores
+score.list <- list()
+
+# read real data from local
+# change the location accordingly
+locs <- c("GSE164378_CITE_filt_label_cells_matrix.rds", "GSE164378_CECITE_filt_label_cells_matrix.rds","CITEseq_amazon_test_filt_label_cells_matrix.rds", "GSE126310_ctrl_filt_label_cells_matrix.rds", "GSE152981_filt_label_cells_matrix.rds", "GSE156718_filt_label_cells_matrix.rds", "pbmc_hto12_10x_filt_label_cells_matrix.rds", "pbmc_hto8_10x_filt_label_cells_matrix.rds", "GSE128879_filt_label_cells_matrix.rds")
+# loop over each dataset
+for(loc in locs){
+  data <- readRDS(loc)
+  count <- data[[1]]; dim(count)
+  label <- data[[2]]; table(label)
+  label <- ifelse(label == 'Doublet', 1, 0); table(label)
+  doublet.rate <- sum(label==1) / length(label); doublet.rate
+  
+  # doubletCells
+  system.time({
+  
+  score <- doubletCells(count)}) #doubletCells(count) be depricated. 
+  
+  score.list <- append(score.list, list(score))
+  
+  # calculate auprc and auroc
+  fg <- score[label==1]
+  bg <- score[label==0]
+  pr <- pr.curve(scores.class0 = fg, scores.class1 = bg, curve = T); pr$auc.integral
+  roc <- roc.curve(scores.class0 = fg, scores.class1 = bg, curve = T); roc$auc
+}
+
+saveRDS(score.list, 'result_df_NEW/doubletCells_all_data_score_list.rds')
+```
+
+# bcds cxds hybrid
+```{r}
+library(Matrix)
+library(Seurat)
+library(scds)
+library(SingleCellExperiment)
+library(PRROC)
+
+##############################################################
+# calculate doublet score on 8 benchmark datasets
+##############################################################
+# list to save doublet scores
+score.list.cxds <- list()
+score.list.bcds <- list()
+score.list.hybrid <- list()
+
+# read real data from local
+
+locs <- c("GSE164378_CITE_filt_label_cells_matrix.rds", "GSE164378_CECITE_filt_label_cells_matrix.rds","CITEseq_amazon_test_filt_label_cells_matrix.rds", "GSE126310_ctrl_filt_label_cells_matrix.rds", "GSE152981_filt_label_cells_matrix.rds", "GSE156718_filt_label_cells_matrix.rds", "pbmc_hto12_10x_filt_label_cells_matrix.rds", "pbmc_hto8_10x_filt_label_cells_matrix.rds", "GSE128879_filt_label_cells_matrix.rds")
+
+# loop over each dataset
+for(loc in locs){
+  data <- readRDS(loc)
+  count <- data[[1]]; dim(count)
+  label <- data[[2]]; table(label)
+  label <- ifelse(label == 'Doublet', 1, 0); table(label)
+  doublet.rate <- sum(label==1) / length(label); doublet.rate
+  sce <- SingleCellExperiment(assays = list(counts = count))
+  # cxds, bcds, hybrid
+  system.time({
+    sce <- cxds_bcds_hybrid(sce)
+  })
+  CD <- colData(sce)
+  score.cxds <- CD$cxds_score
+  score.bcds <- CD$bcds_score
+  score.hybrid <- CD$hybrid_score
+  # save scores
+  score.list.cxds <- append(score.list.cxds, list(score.cxds))
+  score.list.bcds <- append(score.list.bcds, list(score.bcds))
+  score.list.hybrid <- append(score.list.hybrid, list(score.hybrid))
+}
+
+# saveRDS(score.list.cxds, 'results_df/cxds_all_data_score.rds')
+# saveRDS(score.list.bcds, 'results_df/bcds_all_data_score.rds')
+# saveRDS(score.list.hybrid, 'results_df/hybrid_all_data_score.rds')
+
+saveRDS(score.list.cxds, 'result_df_NEW/cxds_all_data_score.rds')
+saveRDS(score.list.bcds, 'result_df_NEW/bcds_all_data_score.rds')
+saveRDS(score.list.hybrid, 'result_df_NEW/hybrid_all_data_score.rds')
+```
+
+# lsize ngene
+```{r}
+library(Matrix)
+library(PRROC)
+
+##############################################################
+# two baseline method: lsize and ngene
+# calculate doublet score on 8 benchmark datasets
+##############################################################
+# list to save doublet scores
+score.list.lsize <- list()
+score.list.ngene <- list()
+
+locs <- c("GSE164378_CITE_filt_label_cells_matrix.rds", "GSE164378_CECITE_filt_label_cells_matrix.rds","CITEseq_amazon_test_filt_label_cells_matrix.rds", "GSE126310_ctrl_filt_label_cells_matrix.rds", "GSE152981_filt_label_cells_matrix.rds", "GSE156718_filt_label_cells_matrix.rds", "pbmc_hto12_10x_filt_label_cells_matrix.rds", "pbmc_hto8_10x_filt_label_cells_matrix.rds", "GSE128879_filt_label_cells_matrix.rds")
+# loop over each dataset
+for(loc in locs){
+  data <- readRDS(loc)
+  count <- data[[1]]; dim(count)
+  label <- data[[2]]; table(label)
+  label <- ifelse(label == 'Doublet', 1, 0); table(label)
+  doublet.rate <- sum(label==1) / length(label); doublet.rate
+  
+  # lsize
+  score.lsize <- colSums(count)
+  score.list.lsize <- append(score.list.lsize, list(score.lsize))
+  # ngene
+  score.ngene <- colSums(count != 0)
+  score.list.ngene <- append(score.list.ngene, list(score.ngene))
+}
+
+saveRDS(score.list.lsize, 'result_df_NEW/lsize_real_score.rds')
+saveRDS(score.list.ngene, 'result_df_NEW/ngene_real_score.rds')
+```
+
+#confusion matrix
+
+```{r}
+library(caret)
+library(e1071)
+pred <-score ==0
+pred <- ifelse(pred==TRUE,0,1); table(pred)
+#Creates vectors having data points
+expected_value <- factor(label)
+predicted_value <- factor(pred)
+ 
+#Creating confusion matrix
+example <- confusionMatrix(data=predicted_value, reference = expected_value)
+ 
+#Display results 
+example
+```
+
+```{r}
+
+# read score list of all doublet detection methods:
+score.list <- readRDS('result_df_NEW/doubletfinder_all_data_score_list.rds')
+#score.list <- readRDS('results_df/doubletCells_all_data_score_list.rds')
+#score.list <- readRDS('results_df/scDblFinder_all_data_score_list.rds')
+#score.list <- readRDS('results_df/bcds_all_data_score.rds')
+#score.list <- readRDS('results_df/ngene_real_score.rds')
+# 9 datasets locations
+locs <- c("GSE164378_CITE_filt_label_cells_matrix.rds", "GSE164378_CECITE_filt_label_cells_matrix.rds","CITEseq_amazon_test_filt_label_cells_matrix.rds", "GSE126310_ctrl_filt_label_cells_matrix.rds", "GSE152981_filt_label_cells_matrix.rds", "GSE156718_filt_label_cells_matrix.rds", "pbmc_hto12_10x_filt_label_cells_matrix.rds", "pbmc_hto8_10x_filt_label_cells_matrix.rds", "GSE128879_filt_label_cells_matrix.rds")
+
+
+# result matrix; 9 rows: each dataset per row; 9 cols: precision, recall, tnr per method
+results <- matrix(, nrow = length(locs), ncol = 0)
+
+
+precisions <- c()
+recalls <- c()
+tnrs <- c()
+Fscore <- c()
+result <- matrix(data = 0, nrow = length(locs), ncol=4)
+for(i in 1:length(locs)){
+  print(locs[i])
+  data <- readRDS(locs[i])
+    # obtain the doublet labels
+  label <- data[[2]]; table(label)
+  label <- ifelse(label == 'Doublet', 1, 0); table(label)
+    # calculate threshold based on identification rate
+  score <- score.list[[i]]
+
+  pred <- score ==0
+  pred <- ifelse(pred==T,0,1); table(pred)
+    # result
+  tp <- sum(pred[which(label==1)]==1); tp
+  fp <- sum(pred[which(label==0)]==1); fp
+  fn <- sum(pred[which(label==1)]==0); fn
+  tn <- sum(pred[which(label==0)]==0); tn
+    
+  precision <- tp/(tp + fp); precision
+  recall <- tp/(tp + fn); recall
+  tnr <- tn/(tn + fp); tnr
+  Fscore <- 2 * precision * recall /(precision + recall)
+    
+  precisions[i] <- precision
+  recalls[i] <- recall
+  tnrs[i] <- tnr
+  Fscore[i] <- Fscore
+}
+# result <- cbind(precisions, recalls, tnrs)
+# colnames(result) <- paste(colnames(result), r, sep = '_')
+#   results <- cbind(results, result)
+
+
+#write.table(round(results,3), 'results_df/threshold_ngene.txt', row.names = F)
+```
+
+##########################################################################################################################
+#calculate auprc and auroc
+##########################################################################################################################
+```{r}
+score.list.doubletfinder <- readRDS('result_df_NEW/doubletfinder_all_data_score_list.rds')
+score.list.scdbfinder <- readRDS("result_df_NEW/scDblFinder_all_data_score_list.rds")
+score.list.doubletcells <- readRDS("result_df_NEW/doubletCells_all_data_score_list.rds")
+score.list.bcds <- readRDS("result_df_NEW/bcds_all_data_score.rds")
+score.list.cxds <- readRDS("result_df_NEW/cxds_all_data_score.rds")
+score.list.hybrid <- readRDS("result_df_NEW/hybrid_all_data_score.rds")
+score.list.ngene <- readRDS("result_df_NEW/ngene_real_score.rds")
+score.list.numi <- readRDS("result_df_NEW/lsize_real_score.rds")
+```
+
+```{r}
+name.method <- c('nUMI','nGene','doubletCells','cxds','bcds','hybrid','DoubletFinder', 'scDblFinder')
+name.data <- c("GSE164378_CITE", "GSE164378_CECITE","CITEseq_PBMC_4HTO","GSE126310_ctrl","GSE152981","GSE156718","PBMC_12HTO_10x","PBMC_8HTO_10x", "GSE128879")
+
+#name.method <- c('lsize','ngene','doubletCells','cxds','bcds','hybrid','DoubletFinder', 'scDblFinder')
+#name.data <- c("CITEseq_PBMC_4HTO","GSE108313_PBMC_8HTO","GSE108313_MixCellLines_4HTO","GSE126310_ctrl_PBMC","GSE152981_PBMC","GSE156718_Mus","pbmc_hto12_10x","pbmc_hto8_10x")
+```
+
+```{r}
+prs <- c()
+rocs <- c()
+
+score_list <- vector("list", length=8)
+label_list <- vector("list", length=8)
+
+for(i in 1:length(locs)){
+    print(locs[i])
+    data <- readRDS(locs[i])
+    # obtain the doublet labels
+    label <- data[[2]]; table(label)
+    label <- ifelse(label == 'Doublet', 1, 0); table(label)
+    label_list[[i]] <- label
+    
+    score <- score.list.doubletfinder[[i]]
+    score_list[[i]] <- score
+    
+    # calculate auprc and auroc
+    fg <- score[label==1]
+    bg <- score[label==0]
+    pr <- pr.curve(scores.class0 = fg, scores.class1 = bg, curve = T); pr$auc.integral
+    roc <- roc.curve(scores.class0 = fg, scores.class1 = bg, curve = T); roc$auc
+    prs[i] <- pr$auc.integral
+    rocs[i] <- roc$auc
+}
+```
+##########################################################################################################################
+# pr, recall, and tnr under 10%, 20%, and 40% identification rates
+##########################################################################################################################
+```{r}
+# read score list of all doublet detection methods:
+score.list <- readRDS('result_df_NEW/doubletfinder_all_data_score_list.rds')
+#score.list <- readRDS('results_df/doubletCells_all_data_score_list.rds')
+#score.list <- readRDS('results_df/scDblFinder_all_data_score_list.rds')
+#score.list <- readRDS('results_df/bcds_all_data_score.rds')
+#score.list <- readRDS('results_df/ngene_real_score.rds')
+# 8 datasets locations
+locs <- c("CITEseq_amazon_test_filt_label_cells_matrix.rds", "GSE108313_filt_label_cells_matrix.rds", "GSE108313_mixcelllines_filt_label_cells_matrix.rds","GSE126310_ctrl_filt_label_cells_matrix.rds", "GSE152981_filt_label_cells_matrix.rds", "GSE156718_filt_label_cells_matrix.rds", "pbmc_hto12_10x_filt_label_cells_matrix.rds", "pbmc_hto8_10x_filt_label_cells_matrix.rds")
+
+# identification rates
+rs <- c(0.1, 0.2, 0.4)
+# result matrix; 8 rows: each dataset per row; 9 cols: precision, recall, tnr per method
+results <- matrix(, nrow = length(locs), ncol = 0)
+
+# loop over identification rates
+for(r in rs){
+  print('====================')
+  print(r)
+  precisions <- c()
+  recalls <- c()
+  tnrs <- c()
+  result <- matrix(data = 0, nrow = length(locs), ncol=3)
+  for(i in 1:length(locs)){
+    print(locs[i])
+    data <- readRDS(locs[i])
+    # obtain the doublet labels
+    label <- data[[2]]; table(label)
+    label <- ifelse(label == 'Doublet', 1, 0); table(label)
+    # calculate threshold based on identification rate
+    score <- score.list[[i]]
+    d <- floor(length(label) * r); d
+    thresh <- sort(score, decreasing = T)[d]; thresh
+    # predict doublet based on threshold
+    pred <- score > thresh; table(pred)
+    # result
+    tp <- sum(pred[which(label==1)]==1); tp
+    fp <- sum(pred[which(label==0)]==1); fp
+    fn <- sum(pred[which(label==1)]==0); fn
+    tn <- sum(pred[which(label==0)]==0); tn
+    
+    precision <- tp/(tp + fp); precision
+    recall <- tp/(tp + fn); recall
+    tnr <- tn/(tn + fp); tnr
+    
+    precisions[i] <- precision
+    recalls[i] <- recall
+    tnrs[i] <- tnr
+  }
+  result <- cbind(precisions, recalls, tnrs)
+  colnames(result) <- paste(colnames(result), r, sep = '_')
+  results <- cbind(results, result)
+}
+
+#write.table(round(results,3), 'results_df/threshold_ngene.txt', row.names = F)
+```
+
+##########################################################################################################################
+#optimal cut-off for each methods of each dataset and pr, recall, TNR and F1
+##########################################################################################################################
+
+```{r}
+#first calculate cut-off for each method of each dataset:
+name.method <- c('nUMI','nGene','doubletCells','cxds','bcds','hybrid','DoubletFinder', 'scDblFinder')
+name.data <- c("GSE164378_CITE", "GSE164378_CECITE","CITEseq_PBMC_4HTO","GSE126310_ctrl","GSE152981","GSE156718","PBMC_12HTO_10x","PBMC_8HTO_10x", "GSE128879")
+
+cut_off_tl <- vector("list", length=9)
+for (i in 1:length(name.data)){
+  for (j in 1:length(name.method)){
+    cut_off_tl[[i]][[j]] <- pROC::coords(new_methods_list[[i]][[j]], x="best", input="threshold", best.method="closest.topleft", ret="all")
+  }
+}
+```
+
+```{r}
+saveRDS(cut_off, "result_df_NEW/optimal_cutoff_methods_eachdataset.rds")
+```
+
+```{r}
+#result <- matrix(data = 0, nrow = 32*length(name.data), ncol=3)
+for (i in 1:length(name.method)){
+  print(cut_off_tl[[9]][[i]]$recall)
+}
+```
+
+
+
+
+
+
+
+
+
+
+
+
+#plot based on youden index/topleft cut-off
+```{r}
+library(readODS)
+result <- read_ods('result_df_NEW/cut-off_youden_index_metrics.ods', sheet = 2)
+precision <- result[(result$metric=='precision'),]
+level.method <- rev(c('nUMI','nGene','doubletCells','cxds','bcds','hybrid','DoubletFinder', 'scDblFinder'))
+precision$doublet_method <- factor(precision$doublet_method, levels = level.method)
+precision$dataset <- factor(precision$dataset, levels = c("GSE164378_CITE", "GSE164378_CECITE","CITEseq_PBMC_4HTO","GSE126310_ctrl","GSE152981","GSE156718","PBMC_12HTO_10x","PBMC_8HTO_10x", "GSE128879"))
+
+pdf('result_df_NEW//methods_cutoff_precision.pdf')
+ggplot(precision, aes(fill=doublet_method, y=dataset, x = value)) + theme_bw() +
+  geom_bar(position=position_dodge(width=0.8), stat="identity", width = .9) + 
+  labs(x=NULL, y=NULL, fill='', title="Precision") +
+  theme(legend.text=element_text(size=16))+
+  theme(plot.title = element_text(hjust = 0.5, size=25),
+        axis.text.y = element_text(size=16),
+        axis.text.x = element_text(size=16),
+        panel.border = element_rect(colour = "black", fill=NA, size=2)) +
+  scale_fill_manual(values=rev(c('black',color_method$color[3:10]))) 
+  # coord_flip(ylim=c(.96,1.005)) +
+  # theme(text = element_text(size=20)) +
+  #theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+dev.off()
+```
+
+```{r}
+result <- read_ods('result_df_NEW/cut-off_youden_index_metrics.ods', sheet = 2)
+recall <- result[(result$metric=='recall'),]
+level.method <- rev(c('nUMI','nGene','doubletCells','cxds','bcds','hybrid','DoubletFinder', 'scDblFinder'))
+recall$doublet_method <- factor(recall$doublet_method, levels = level.method)
+recall$dataset <- factor(recall$dataset, levels = c("GSE164378_CITE", "GSE164378_CECITE","CITEseq_PBMC_4HTO","GSE126310_ctrl","GSE152981","GSE156718","PBMC_12HTO_10x","PBMC_8HTO_10x", "GSE128879"))
+
+pdf('result_df_NEW//methods_cutoff_recall.pdf')
+ggplot(recall, aes(fill=doublet_method, y=dataset, x = value)) + theme_bw() +
+  geom_bar(position=position_dodge(width=0.8), stat="identity", width = .9) + 
+  labs(x=NULL, y=NULL, fill='', title="Recall") +
+  theme(legend.text=element_text(size=16))+
+  theme(plot.title = element_text(hjust = 0.5, size=25),
+        axis.text.y = element_text(size=16),
+        axis.text.x = element_text(size=16),
+        panel.border = element_rect(colour = "black", fill=NA, size=2)) +
+  scale_fill_manual(values=rev(c('black',color_method$color[3:10]))) 
+  # coord_flip(ylim=c(.96,1.005)) +
+  # theme(text = element_text(size=20)) +
+  #theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+dev.off()
+```
+
+```{r}
+result <- read_ods('result_df_NEW/cut-off_youden_index_metrics.ods', sheet = 2)
+TNR <- result[(result$metric=='TNR'),]
+level.method <- rev(c('nUMI','nGene','doubletCells','cxds','bcds','hybrid','DoubletFinder', 'scDblFinder'))
+TNR$doublet_method <- factor(TNR$doublet_method, levels = level.method)
+TNR$dataset <- factor(TNR$dataset, levels = c("GSE164378_CITE", "GSE164378_CECITE","CITEseq_PBMC_4HTO","GSE126310_ctrl","GSE152981","GSE156718","PBMC_12HTO_10x","PBMC_8HTO_10x", "GSE128879"))
+
+pdf('result_df_NEW//methods_cutoff_TNR.pdf')
+ggplot(TNR, aes(fill=doublet_method, y=dataset, x = value)) + theme_bw() +
+  geom_bar(position=position_dodge(width=0.8), stat="identity", width = .9) + 
+  labs(x=NULL, y=NULL, fill='', title="TNR") +
+  theme(legend.text=element_text(size=16))+
+  theme(plot.title = element_text(hjust = 0.5, size=25),
+        axis.text.y = element_text(size=16),
+        axis.text.x = element_text(size=16),
+        panel.border = element_rect(colour = "black", fill=NA, size=2)) +
+  scale_fill_manual(values=rev(c('black',color_method$color[3:10]))) 
+  # coord_flip(ylim=c(.96,1.005)) +
+  # theme(text = element_text(size=20)) +
+  #theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+dev.off()
+```
+
+```{r}
+result <- read_ods('result_df_NEW/cut-off_youden_index_metrics.ods', sheet = 2)
+F1 <- result[(result$metric=='f1_score'),]
+level.method <- rev(c('nUMI','nGene','doubletCells','cxds','bcds','hybrid','DoubletFinder', 'scDblFinder'))
+F1$doublet_method <- factor(F1$doublet_method, levels = level.method)
+F1$dataset <- factor(F1$dataset, levels = c("GSE164378_CITE", "GSE164378_CECITE","CITEseq_PBMC_4HTO","GSE126310_ctrl","GSE152981","GSE156718","PBMC_12HTO_10x","PBMC_8HTO_10x", "GSE128879"))
+```
+
+```{r}
+color_method_2 <- rbind(color_method, de)
+# color_method_2[1,1] <- 'white'
+# color_method_2[2,1] <- 'white'
+color_method_2[3:8,1] <- c('#a65628','#377eb8','#4daf4a','#984ea3','#ff7f00','#666666')
+col_rev <- rev(color_method_2$color)
+```
+
+
+
+
+```{r}
+recall_ <- ggplot(recall, aes(y=value, x=doublet_method, fill=doublet_method)) +
+  geom_boxplot() +
+  labs(x=NULL, y=NULL, fill='', title="Recall") +
+  geom_point(position = position_jitter()) + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size=15),axis.text.y = element_text(size=15),
+        plot.title = element_text(hjust = 0.5,size=20)) +
+  scale_fill_manual(values=col_rev[5:12])+ ylim(c(0,1)) +
+  theme(legend.position = "none")
+
+TNR_ <- ggplot(TNR, aes(y=value, x=doublet_method, fill=doublet_method)) +
+  geom_boxplot() + 
+  geom_point(position = position_jitter()) + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+ 
+  labs(x=NULL, y=NULL, fill='', title="TNR") + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size=15),axis.text.y = element_text(size=15),
+        plot.title = element_text(hjust = 0.5,size=20)) +
+  scale_fill_manual(values=col_rev[5:12])+ ylim(c(0,1)) +
+  theme(legend.position = "none")
+
+precison_ <- ggplot(precision, aes(y=value, x=doublet_method, fill=doublet_method)) +
+  geom_boxplot() + 
+  geom_point(position = position_jitter()) + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+ 
+  labs(x=NULL, y=NULL, fill='', title="Precision") + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size=15),axis.text.y = element_text(size=15),
+        plot.title = element_text(hjust = 0.5,size=20)) +
+  scale_fill_manual(values=col_rev[5:12])+ ylim(c(0,1)) +
+  theme(legend.position = "none")
+
+fscore_ <- ggplot(F1, aes(y=value, x=doublet_method, fill=doublet_method)) +
+  geom_boxplot() + 
+  geom_point(position = position_jitter()) + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+ 
+  labs(x=NULL, y=NULL, fill='', title="F1 score") + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size=15),axis.text.y = element_text(size=15),
+        plot.title = element_text(hjust = 0.5,size=20)) +
+  scale_fill_manual(values=col_rev[5:12])+ ylim(c(0,1)) +
+  theme(legend.position = "none")
+
+res.dir <- paste0("result_df_NEW/")
+dir.create(res.dir) 
+ggsave(
+  grid.arrange(cowplot::plot_grid(recall_, precison_, TNR_, fscore_, align = "h",ncol=2)
+               ),
+  file=paste0(res.dir,"pr_re_tnr_fsc_youdenindex.pdf"), width = 12, height=10
+  )
+```
+
+
+
+#PROC package to visualize curve plot for each dataset in one plot for each method
+
+
+```{r}
+methods_list <- list()
+
+```
+
+```{r}
+library(pROC)
+
+
+rocobj_list <- vector("list", length=8)
+
+
+for (i in 1:length(label_list)) {
+  
+  score <- score_list[[i]]
+  label <- label_list[[i]]
+  
+  rocobj_list[[i]] <- roc(label,score)   
+
+}
+
+
+methods_list <- append(methods_list, list(rocobj_list))
+
+```
+
+```{r}
+list.save(methods_list, file="result_df_NEW/ROCs_objects_all_methods_each_dataset.rds")
+```
+
+```{r}
+methods_list <- readRDS("result_df_NEW/ROCs_objects_all_methods_each_dataset.rds")
+```
+
+
+```{r}
+name.method <- c('nUMI','nGene','doubletCells','cxds','bcds','hybrid','DoubletFinder', 'scDblFinder')
+name.data <- c("GSE164378_CITE", "GSE164378_CECITE","CITEseq_PBMC_4HTO","GSE126310_ctrl","GSE152981","GSE156718","MIX_12HTO_10x","PBMC_8HTO_10x", "GSE128879")
+
+
+gg_color_hue <- function(n) {
+  hues = seq(15, 375, length = n + 1)
+  hcl(h = hues, l = 65, c = 100)[1:n]
+}
+color <- gg_color_hue(11); color
+color_data <- as.data.frame(cbind(color[1:9], name.data), stringsAsFactors = F)
+colnames(color_data) <- c('color','data')
+str(color_data)
+color_data[1:9,1] <- c('#e41a1c','#377eb8','#4daf4a','#984ea3','#ff7f00','#666666','#a65628','#f781bf','#999999')
+
+names(methods_list[[1]]) <- name.data
+names(methods_list[[2]]) <- name.data
+names(methods_list[[3]]) <- name.data
+names(methods_list[[4]]) <- name.data
+names(methods_list[[5]]) <- name.data
+names(methods_list[[6]]) <- name.data
+names(methods_list[[7]]) <- name.data
+names(methods_list[[8]]) <- name.data
+
+
+
+
+obj1 <- ggroc(methods_list[[1]], aes="colour", legacy.axes = TRUE)
+obj1 <- obj1 + scale_color_manual(values=color_data$color[1:10]) +
+  theme_classic() +
+  ggtitle("nUMI") +
+  labs(x = "Specificity",
+       y = "Sensitivity",
+       colour = "Datasets")+ 
+  theme(legend.position = c(0.85, 0.35))+
+  theme(legend.text = element_text(colour="black", size=10))+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size=18), axis.text.y = element_text(size=18),
+        plot.title = element_text(hjust = 0.5,size=20)) +
+  theme(axis.ticks=element_blank(), panel.border = element_rect(colour = "black", fill=NA, size=2)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())  
+
+obj2 <- ggroc(methods_list[[2]], aes="colour", legacy.axes = TRUE)
+obj2 <- obj2 + scale_color_manual(values=color_data$color[1:10]) +
+  theme_classic() +
+  ggtitle("nGene") +
+  labs(x = "Specificity",
+       y = "Sensitivity",
+       colour = "Datasets")+ 
+  theme(legend.position = c(0.85, 0.35))+
+  theme(legend.text = element_text(colour="black", size=10))+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size=18), axis.text.y = element_text(size=18),
+        plot.title = element_text(hjust = 0.5,size=20)) +
+  theme(axis.ticks=element_blank(), panel.border = element_rect(colour = "black", fill=NA, size=2)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+obj3 <- ggroc(methods_list[[3]], aes="colour", legacy.axes = TRUE)
+obj3 <- obj3 + scale_color_manual(values=color_data$color[1:10]) +
+  theme_classic() +
+  ggtitle("doubletCells") +
+  labs(x = "Specificity",
+       y = "Sensitivity",
+       colour = "Datasets")+ 
+  theme(legend.position = c(0.85, 0.35))+
+  theme(legend.text = element_text(colour="black", size=10))+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size=18), axis.text.y = element_text(size=18),
+        plot.title = element_text(hjust = 0.5,size=20)) +
+  theme(axis.ticks=element_blank(), panel.border = element_rect(colour = "black", fill=NA, size=2)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+obj4 <- ggroc(methods_list[[4]], aes="colour", legacy.axes = TRUE)
+obj4 <- obj4 + scale_color_manual(values=color_data$color[1:10]) +
+  theme_classic() +
+  ggtitle("cxds") +
+  labs(x = "Specificity",
+       y = "Sensitivity",
+       colour = "Datasets")+ 
+  theme(legend.position = c(0.85, 0.35))+
+  theme(legend.text = element_text(colour="black", size=10))+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size=18), axis.text.y = element_text(size=18),
+        plot.title = element_text(hjust = 0.5,size=20)) +
+  theme(axis.ticks=element_blank(), panel.border = element_rect(colour = "black", fill=NA, size=2)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+obj5 <- ggroc(methods_list[[5]], aes="colour", legacy.axes = TRUE)
+obj5 <- obj5 + scale_color_manual(values=color_data$color[1:10]) +
+  theme_classic() +
+  ggtitle("bcds") +
+  labs(x = "Specificity",
+       y = "Sensitivity",
+       colour = "Datasets")+ 
+  theme(legend.position = c(0.85, 0.35))+
+  theme(legend.text = element_text(colour="black", size=10))+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size=18), axis.text.y = element_text(size=18),
+        plot.title = element_text(hjust = 0.5,size=20)) +
+  theme(axis.ticks=element_blank(), panel.border = element_rect(colour = "black", fill=NA, size=2)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+obj6 <- ggroc(methods_list[[6]], aes="colour", legacy.axes = TRUE)
+obj6 <- obj6 + scale_color_manual(values=color_data$color[1:10]) +
+  theme_classic() +
+  ggtitle("hybrid") +
+  labs(x = "Specificity",
+       y = "Sensitivity",
+       colour = "Datasets")+ 
+  theme(legend.position = c(0.85, 0.35))+
+  theme(legend.text = element_text(colour="black", size=10))+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size=18), axis.text.y = element_text(size=18),
+        plot.title = element_text(hjust = 0.5,size=20)) +
+  theme(axis.ticks=element_blank(), panel.border = element_rect(colour = "black", fill=NA, size=2)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+obj7 <- ggroc(methods_list[[7]], aes="colour", legacy.axes = TRUE)
+obj7 <- obj7 + scale_color_manual(values=color_data$color[1:10]) +
+  theme_classic() +
+  ggtitle("DoubletFinder") +
+  labs(x = "Specificity",
+       y = "Sensitivity",
+       colour = "Datasets")+ 
+  theme(legend.position = c(0.85, 0.35))+
+  theme(legend.text = element_text(colour="black", size=10))+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size=18), axis.text.y = element_text(size=18),
+        plot.title = element_text(hjust = 0.5,size=20)) +
+  theme(axis.ticks=element_blank(), panel.border = element_rect(colour = "black", fill=NA, size=2)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+obj8 <- ggroc(methods_list[[8]], aes="colour", legacy.axes = TRUE)
+obj8 <- obj8 + scale_color_manual(values=color_data$color[1:10]) +
+  theme_classic() +
+  ggtitle("scDblFinder") +
+  labs(x = "Specificity",
+       y = "Sensitivity",
+       y = "Sensitivity",
+       colour = "Datasets")+ 
+  theme(legend.position = c(0.85, 0.35))+
+  theme(legend.text = element_text(colour="black", size=10))+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size=18), axis.text.y = element_text(size=18),
+        plot.title = element_text(hjust = 0.5,size=20)) +
+  theme(axis.ticks=element_blank(), panel.border = element_rect(colour = "black", fill=NA, size=2)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+```
+
+
+```{r}
+library(gridExtra)
+library(grid)
+res.dir <- paste0("result_df_NEW/")
+dir.create(res.dir) 
+ggsave(
+  grid.arrange(cowplot::plot_grid(obj1, obj2, obj3, obj4, obj5, obj6, obj7, obj8, align = "h",ncol=2)
+               ),
+  file=paste0(res.dir,"ROC_curves_each_dataset_method.tiff"), width = 15, height=20
+  )
+```
+
+###Create new list of roc objects (each plot is one dataset with all methods)
+
+```{r}
+library(tidyverse)
+new_methods_list <- transpose(methods_list)
+```
+
+
+```{r}
+new_methods_list[[1]]
+```
+
+```{r}
+
+name.data <- c("GSE164378_CITE", "GSE164378_CECITE","CITEseq_PBMC_4HTO","GSE126310_ctrl","GSE152981","GSE156718","MIX_12HTO_10x","PBMC_8HTO_10x", "GSE128879")
+
+gg_color_hue <- function(n) {
+  hues = seq(15, 375, length = n + 1)
+  hcl(h = hues, l = 65, c = 100)[1:n]
+}
+color <- gg_color_hue(11); color
+color_data <- as.data.frame(cbind(color[1:9], name.method), stringsAsFactors = F)
+colnames(color_data) <- c('color','data')
+str(color_data)
+color_data[1:10,1] <- c('#e41a1c','#377eb8','#4daf4a','#984ea3','#ff7f00','#666666','#a65628','#f781bf','#999999', '"#FF63B6')
+
+names(new_methods_list[[1]]) <- name.method
+names(new_methods_list[[2]]) <- name.method
+names(new_methods_list[[3]]) <- name.method
+names(new_methods_list[[4]]) <- name.method
+names(new_methods_list[[5]]) <- name.method
+names(new_methods_list[[6]]) <- name.method
+names(new_methods_list[[7]]) <- name.method
+names(new_methods_list[[8]]) <- name.method
+names(new_methods_list[[9]]) <- name.method
+
+
+
+obj1 <- ggroc(new_methods_list[[1]], aes="colour", legacy.axes = TRUE)
+obj1 <- obj1 + scale_color_manual(values=color_data$color[1:10],labels = c(sprintf("nUMI (AUC=%s)", round(new_methods_list[[1]]$nUMI$auc,2)), sprintf("nGene (AUC=%s)", round(new_methods_list[[1]]$nGene$auc,2)), sprintf("doubletCells (AUC=%s)", round(new_methods_list[[1]]$doubletCells$auc,2)),sprintf("cxds (AUC=%s)", round(new_methods_list[[1]]$cxds$auc,2)),sprintf("bcds (AUC=%s)", round(new_methods_list[[1]]$bcds$auc,2)),sprintf("hybrid (AUC=%s)", round(new_methods_list[[1]]$hybrid$auc,2)), sprintf("DoubletFinder (AUC=%s)", round(new_methods_list[[1]]$DoubletFinder$auc,2)),sprintf("scDblFinder (AUC=%s)", round(new_methods_list[[1]]$scDblFinder$auc,2)))) +
+  guides(colour = guide_legend(override.aes = list(size=2)))+
+  theme_classic() +
+  ggtitle("GSE164378_CITE") +
+  labs(x = "1-Specificity",
+       y = "Sensitivity",
+       colour = "Methods")+
+  theme(legend.title=element_text(size=18))+
+  theme(legend.text = element_text(colour="black", size=18))+
+  theme(axis.title.x = element_text(size =18), axis.title.y = element_text(size =18))+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size=20), axis.text.y = element_text(size=20),
+        plot.title = element_text(hjust = 0.5,size=20)) +
+  theme(axis.ticks=element_blank(), panel.border = element_rect(colour = "black", fill=NA, size=2)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())  
+
+obj2 <- ggroc(new_methods_list[[2]], aes="colour", legacy.axes = TRUE)
+obj2 <- obj2 + scale_color_manual(values=color_data$color[1:10],labels = c(sprintf("nUMI (AUC=%s)", round(new_methods_list[[2]]$nUMI$auc,2)), sprintf("nGene (AUC=%s)", round(new_methods_list[[2]]$nGene$auc,2)), sprintf("doubletCells (AUC=%s)", round(new_methods_list[[2]]$doubletCells$auc,2)),sprintf("cxds (AUC=%s)", round(new_methods_list[[2]]$cxds$auc,2)),sprintf("bcds (AUC=%s)", round(new_methods_list[[2]]$bcds$auc,2)),sprintf("hybrid (AUC=%s)", round(new_methods_list[[2]]$hybrid$auc,2)), sprintf("DoubletFinder (AUC=%s)", round(new_methods_list[[2]]$DoubletFinder$auc,2)),sprintf("scDblFinder (AUC=%s)", round(new_methods_list[[2]]$scDblFinder$auc,2)))) +
+  guides(colour = guide_legend(override.aes = list(size=2)))+
+  theme_classic() +
+  ggtitle("GSE164378_CECITE") +
+  labs(x = "1-Specificity",
+       y = "Sensitivity",
+       colour = "Methods")+ 
+  theme(legend.title=element_text(size=18))+
+  theme(legend.text = element_text(colour="black", size=18))+
+  theme(axis.title.x = element_text(size =18), axis.title.y = element_text(size =18))+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size=20), axis.text.y = element_text(size=20),
+        plot.title = element_text(hjust = 0.5,size=20)) +
+  theme(axis.ticks=element_blank(), panel.border = element_rect(colour = "black", fill=NA, size=2)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+obj3 <- ggroc(new_methods_list[[3]], aes="colour", legacy.axes = TRUE)
+obj3 <- obj3 + scale_color_manual(values=color_data$color[1:10],labels = c(sprintf("nUMI (AUC=%s)", round(new_methods_list[[3]]$nUMI$auc,2)), sprintf("nGene (AUC=%s)", round(new_methods_list[[3]]$nGene$auc,2)), sprintf("doubletCells (AUC=%s)", round(new_methods_list[[3]]$doubletCells$auc,2)),sprintf("cxds (AUC=%s)", round(new_methods_list[[3]]$cxds$auc,2)),sprintf("bcds (AUC=%s)", round(new_methods_list[[3]]$bcds$auc,2)),sprintf("hybrid (AUC=%s)", round(new_methods_list[[3]]$hybrid$auc,2)), sprintf("DoubletFinder (AUC=%s)", round(new_methods_list[[3]]$DoubletFinder$auc,2)),sprintf("scDblFinder (AUC=%s)", round(new_methods_list[[3]]$scDblFinder$auc,2)))) +
+  guides(colour = guide_legend(override.aes = list(size=2)))+
+  theme_classic() +
+  ggtitle("CITEseq_PBMC_4HTO") +
+  labs(x = "1-Specificity",
+       y = "Sensitivity",
+       colour = "Methods")+ 
+  theme(legend.title=element_text(size=18))+
+  theme(legend.text = element_text(colour="black", size=18))+
+  theme(axis.title.x = element_text(size =18), axis.title.y = element_text(size =18))+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size=20), axis.text.y = element_text(size=20),
+        plot.title = element_text(hjust = 0.5,size=20)) +
+  theme(axis.ticks=element_blank(), panel.border = element_rect(colour = "black", fill=NA, size=2)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+obj4 <- ggroc(new_methods_list[[4]], aes="colour", legacy.axes = TRUE)
+obj4 <- obj4 + scale_color_manual(values=color_data$color[1:10],labels = c(sprintf("nUMI (AUC=%s)", round(new_methods_list[[4]]$nUMI$auc,2)), sprintf("nGene (AUC=%s)", round(new_methods_list[[4]]$nGene$auc,2)), sprintf("doubletCells (AUC=%s)", round(new_methods_list[[4]]$doubletCells$auc,2)),sprintf("cxds (AUC=%s)", round(new_methods_list[[4]]$cxds$auc,2)),sprintf("bcds (AUC=%s)", round(new_methods_list[[4]]$bcds$auc,2)),sprintf("hybrid (AUC=%s)", round(new_methods_list[[4]]$hybrid$auc,2)), sprintf("DoubletFinder (AUC=%s)", round(new_methods_list[[4]]$DoubletFinder$auc,2)),sprintf("scDblFinder (AUC=%s)", round(new_methods_list[[4]]$scDblFinder$auc,2)))) +
+  guides(colour = guide_legend(override.aes = list(size=2)))+
+  theme_classic() +
+  ggtitle("GSE126310_ctrl") +
+  labs(x = "1-Specificity",
+       y = "Sensitivity",
+       colour = "Methods")+ 
+  theme(legend.title=element_text(size=18))+
+  theme(legend.text = element_text(colour="black", size=18))+
+  theme(axis.title.x = element_text(size =18), axis.title.y = element_text(size =18))+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size=20), axis.text.y = element_text(size=20),
+        plot.title = element_text(hjust = 0.5,size=20)) +
+  theme(axis.ticks=element_blank(), panel.border = element_rect(colour = "black", fill=NA, size=2)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+obj5 <- ggroc(new_methods_list[[5]], aes="colour", legacy.axes = TRUE)
+obj5 <- obj5 + scale_color_manual(values=color_data$color[1:10],labels = c(sprintf("nUMI (AUC=%s)", round(new_methods_list[[5]]$nUMI$auc,2)), sprintf("nGene (AUC=%s)", round(new_methods_list[[5]]$nGene$auc,2)), sprintf("doubletCells (AUC=%s)", round(new_methods_list[[5]]$doubletCells$auc,2)),sprintf("cxds (AUC=%s)", round(new_methods_list[[5]]$cxds$auc,2)),sprintf("bcds (AUC=%s)", round(new_methods_list[[5]]$bcds$auc,2)),sprintf("hybrid (AUC=%s)", round(new_methods_list[[5]]$hybrid$auc,2)), sprintf("DoubletFinder (AUC=%s)", round(new_methods_list[[5]]$DoubletFinder$auc,2)),sprintf("scDblFinder (AUC=%s)", round(new_methods_list[[5]]$scDblFinder$auc,2)))) +
+  guides(colour = guide_legend(override.aes = list(size=2)))+
+  theme_classic() +
+  ggtitle("GSE152981") +
+  labs(x = "1-Specificity",
+       y = "Sensitivity",
+       colour = "Methods")+ 
+  theme(legend.title=element_text(size=18))+
+  theme(legend.text = element_text(colour="black", size=18))+
+  theme(axis.title.x = element_text(size =18), axis.title.y = element_text(size =18))+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size=20), axis.text.y = element_text(size=20),
+        plot.title = element_text(hjust = 0.5,size=20)) +
+  theme(axis.ticks=element_blank(), panel.border = element_rect(colour = "black", fill=NA, size=2)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+obj6 <- ggroc(new_methods_list[[6]], aes="colour", legacy.axes = TRUE)
+obj6 <- obj6 + scale_color_manual(values=color_data$color[1:10],labels = c(sprintf("nUMI (AUC=%s)", round(new_methods_list[[6]]$nUMI$auc,2)), sprintf("nGene (AUC=%s)", round(new_methods_list[[6]]$nGene$auc,2)), sprintf("doubletCells (AUC=%s)", round(new_methods_list[[6]]$doubletCells$auc,2)),sprintf("cxds (AUC=%s)", round(new_methods_list[[6]]$cxds$auc,2)),sprintf("bcds (AUC=%s)", round(new_methods_list[[6]]$bcds$auc,2)),sprintf("hybrid (AUC=%s)", round(new_methods_list[[6]]$hybrid$auc,2)), sprintf("DoubletFinder (AUC=%s)", round(new_methods_list[[6]]$DoubletFinder$auc,2)),sprintf("scDblFinder (AUC=%s)", round(new_methods_list[[6]]$scDblFinder$auc,2)))) +
+  guides(colour = guide_legend(override.aes = list(size=2)))+
+  theme_classic() +
+  ggtitle("GSE156718") +
+  labs(x = "1-Specificity",
+       y = "Sensitivity",
+       colour = "Methods")+ 
+  theme(legend.title=element_text(size=18))+
+  theme(legend.text = element_text(colour="black", size=18))+
+  theme(axis.title.x = element_text(size =18), axis.title.y = element_text(size =18))+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size=20), axis.text.y = element_text(size=20),
+        plot.title = element_text(hjust = 0.5,size=20)) +
+  theme(axis.ticks=element_blank(), panel.border = element_rect(colour = "black", fill=NA, size=2)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+obj7 <- ggroc(new_methods_list[[7]], aes="colour", legacy.axes = TRUE)
+obj7 <- obj7 + scale_color_manual(values=color_data$color[1:10],labels = c(sprintf("nUMI (AUC=%s)", round(new_methods_list[[7]]$nUMI$auc,2)), sprintf("nGene (AUC=%s)", round(new_methods_list[[7]]$nGene$auc,2)), sprintf("doubletCells (AUC=%s)", round(new_methods_list[[7]]$doubletCells$auc,2)),sprintf("cxds (AUC=%s)", round(new_methods_list[[7]]$cxds$auc,2)),sprintf("bcds (AUC=%s)", round(new_methods_list[[7]]$bcds$auc,2)),sprintf("hybrid (AUC=%s)", round(new_methods_list[[7]]$hybrid$auc,2)), sprintf("DoubletFinder (AUC=%s)", round(new_methods_list[[7]]$DoubletFinder$auc,2)),sprintf("scDblFinder (AUC=%s)", round(new_methods_list[[7]]$scDblFinder$auc,2)))) +
+  guides(colour = guide_legend(override.aes = list(size=2)))+
+  theme_classic() +
+  ggtitle("MIX_12HTO_10x") +
+  labs(x = "1-Specificity",
+       y = "Sensitivity",
+       colour = "Methods")+ 
+  theme(legend.title=element_text(size=18))+
+  theme(legend.text = element_text(colour="black", size=18))+
+  theme(axis.title.x = element_text(size =18), axis.title.y = element_text(size =18))+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size=20), axis.text.y = element_text(size=20),
+        plot.title = element_text(hjust = 0.5,size=20)) +
+  theme(axis.ticks=element_blank(), panel.border = element_rect(colour = "black", fill=NA, size=2)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+obj8 <- ggroc(new_methods_list[[8]], aes="colour", legacy.axes = TRUE)
+obj8 <- obj8 + scale_color_manual(values=color_data$color[1:10],labels = c(sprintf("nUMI (AUC=%s)", round(new_methods_list[[8]]$nUMI$auc,2)), sprintf("nGene (AUC=%s)", round(new_methods_list[[8]]$nGene$auc,2)), sprintf("doubletCells (AUC=%s)", round(new_methods_list[[8]]$doubletCells$auc,2)),sprintf("cxds (AUC=%s)", round(new_methods_list[[8]]$cxds$auc,2)),sprintf("bcds (AUC=%s)", round(new_methods_list[[8]]$bcds$auc,2)),sprintf("hybrid (AUC=%s)", round(new_methods_list[[8]]$hybrid$auc,2)), sprintf("DoubletFinder (AUC=%s)", round(new_methods_list[[8]]$DoubletFinder$auc,2)),sprintf("scDblFinder (AUC=%s)", round(new_methods_list[[8]]$scDblFinder$auc,2)))) +
+  guides(colour = guide_legend(override.aes = list(size=2)))+
+  theme_classic() +
+  ggtitle("PBMC_8HTO_10x") +
+  labs(x = "1-Specificity",
+       y = "Sensitivity",
+       colour = "Methods")+ 
+  theme(legend.title=element_text(size=18))+
+  theme(legend.text = element_text(colour="black", size=18))+
+  theme(axis.title.x = element_text(size =18), axis.title.y = element_text(size =18))+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size=20), axis.text.y = element_text(size=20),
+        plot.title = element_text(hjust = 0.5,size=20)) +
+  theme(axis.ticks=element_blank(), panel.border = element_rect(colour = "black", fill=NA, size=2)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+obj9 <- ggroc(new_methods_list[[9]], aes="colour", legacy.axes = TRUE)
+obj9 <- obj9 + scale_color_manual(values=color_data$color[1:10],labels = c(sprintf("nUMI (AUC=%s)", round(new_methods_list[[9]]$nUMI$auc,2)), sprintf("nGene (AUC=%s)", round(new_methods_list[[9]]$nGene$auc,2)), sprintf("doubletCells (AUC=%s)", round(new_methods_list[[9]]$doubletCells$auc,2)),sprintf("cxds (AUC=%s)", round(new_methods_list[[9]]$cxds$auc,2)),sprintf("bcds (AUC=%s)", round(new_methods_list[[9]]$bcds$auc,2)),sprintf("hybrid (AUC=%s)", round(new_methods_list[[9]]$hybrid$auc,2)), sprintf("DoubletFinder (AUC=%s)", round(new_methods_list[[9]]$DoubletFinder$auc,2)),sprintf("scDblFinder (AUC=%s)", round(new_methods_list[[9]]$scDblFinder$auc,2)))) +
+  guides(colour = guide_legend(override.aes = list(size=2)))+
+  theme_classic() +
+  ggtitle("GSE128879") +
+  labs(x = "1-Specificity",
+       y = "Sensitivity",
+       colour = "Methods")+ 
+  theme(legend.title=element_text(size=18))+
+  theme(legend.text = element_text(colour="black", size=18))+
+  theme(axis.title.x = element_text(size =18), axis.title.y = element_text(size =18))+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size=20), axis.text.y = element_text(size=20),
+        plot.title = element_text(hjust = 0.5,size=20)) +
+  theme(axis.ticks=element_blank(), panel.border = element_rect(colour = "black", fill=NA, size=2)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+library(gridExtra)
+library(grid)
+res.dir <- paste0("result_df_NEW/")
+dir.create(res.dir) 
+ggsave(
+  grid.arrange(cowplot::plot_grid(obj1, obj2, obj3, obj4, obj5, obj6, obj7, obj8, obj9, align = "h",ncol=2)
+               ),
+  file=paste0(res.dir,"REVERSE_ROC_curves_each_dataset_method_1.pdf"), width = 17, height=19
+  )
+```
+##########################################################################################################################
+#roc.test pairwise comparison of tools for each dataset:
+##########################################################################################################################
+```{r}
+name.method <- c('nUMI','nGene','doubletCells','cxds','bcds','hybrid','DoubletFinder', 'scDblFinder')
+name.data <- c("GSE164378_CITE", "GSE164378_CECITE","CITEseq_PBMC_4HTO","GSE126310_ctrl","GSE152981","GSE156718","PBMC_12HTO_10x","PBMC_8HTO_10x", "GSE128879")
+
+all_tests_list <- vector("list", length=9)
+for (i in 1:length(name.data)){
+  print(i)
+  all_tests_list[[i]] <-combn(
+  list(
+    "nUMI" = new_methods_list[[i]][[1]],
+    "nGene" = new_methods_list[[i]][[2]],
+    "doubletCells" = new_methods_list[[i]][[3]],
+    "cxds" = new_methods_list[[i]][[4]],
+    "bcds" = new_methods_list[[i]][[5]],
+    "hybrid" = new_methods_list[[i]][[6]],
+    "DoubletFinder" = new_methods_list[[i]][[7]],
+    "scDblFinder" = new_methods_list[[i]][[8]]
+  ),
+  FUN = function(x, ...) roc.test(x[[1]], x[[2]]),
+  m = 2,
+  simplify = FALSE, 
+  reuse.auc = TRUE, 
+  method = "delong", 
+  na.rm = TRUE
+)
+}
+```
+
+```{r}
+library(rlist)
+list.save(all_tests_list, file="result_df_NEW/ROC_tests_all_compare.rds")
+```
+
+```{r}
+all_tests_list <- readRDS("result_df_NEW/ROC_tests_all_compare.rds")
+```
+
+test one dataset:
+```{r}
+name.method <- c('nUMI','nGene','doubletCells','cxds','bcds','hybrid','DoubletFinder', 'scDblFinder')
+name.data <- c("GSE164378_CITE", "GSE164378_CECITE","CITEseq_PBMC_4HTO","GSE126310_ctrl","GSE152981","GSE156718","MIX_12HTO_10x","PBMC_8HTO_10x", "GSE128879")
+
+#for GSE164378_CITE testing:
+all_tests <-combn(
+  list(
+    "nUMI" = new_methods_list[[1]][[1]],
+    "nGene" = new_methods_list[[1]][[2]],
+    "doubletCells" = new_methods_list[[1]][[3]],
+    "cxds" = new_methods_list[[1]][[4]],
+    "bcds" = new_methods_list[[1]][[5]],
+    "hybrid" = new_methods_list[[1]][[6]],
+    "DoubletFinder" = new_methods_list[[1]][[7]],
+    "scDblFinder" = new_methods_list[[1]][[8]]
+  ),
+  FUN = function(x, ...) roc.test(x[[1]], x[[2]]),
+  m = 2,
+  simplify = FALSE, 
+  reuse.auc = TRUE, 
+  method = "delong", 
+  na.rm = TRUE
+)
+
+```
+
+```{r}
+tests_names <- combn(
+  list('nUMI','nGene','doubletCells','cxds','bcds','hybrid','DoubletFinder', 'scDblFinder'),
+  m = 2,
+  FUN = paste,
+  simplify = TRUE,
+  collapse = "-"
+)
+all_tests_GSE164378_CITE <- setNames(all_tests_list[[1]], tests_names)
+all_tests_GSE164378_CECITE <- setNames(all_tests_list[[2]], tests_names)
+all_tests_CITEseq_PBMC_4HTO <- setNames(all_tests_list[[3]], tests_names)
+all_tests_GSE126310_ctrl <- setNames(all_tests_list[[4]], tests_names)
+all_tests_GSE152981 <- setNames(all_tests_list[[5]], tests_names)
+all_tests_GSE156718 <- setNames(all_tests_list[[6]], tests_names)
+all_tests_PBMC_12HTO_10x <- setNames(all_tests_list[[7]], tests_names)
+all_tests_PBMC_8HTO_10x <- setNames(all_tests_list[[8]], tests_names)
+all_tests_GSE128879 <- setNames(all_tests_list[[9]], tests_names)
+```
+
+#Create heat map for pairwise comparison
+```{r}
+library(stringr)
+library(dplyr)
+library(tidyr)
+library(RColorBrewer)
+library(pheatmap)
+library(ggplotify)
+library(gtable)
+library(grid)
+
+
+create_heatmap <- function(df, name_data) {
+  
+  save <- data.frame(matrix(ncol = 1, nrow = 28))
+  rownames(save) <- c(names(df))
+  colnames(save) <- "p.value"
+  
+  for (i in names(df)){
+    paired <- df[[i]]
+    save[i, ] <- c(paired$p.value)
+  }
+  save$methods <- rownames(save)
+  save <- save %>%
+    separate(methods, c("method1", "method2"), "-")
+
+  dfr <- pivot_wider(save, names_from = method2, values_from = p.value);dfr
+  dfr$nUMI <- NA
+  dfr <- rbind(dfr, c("scDblFinder", NA, NA, NA, NA, NA, NA, NA, NA))
+  dfr <- dfr[,c(9, 1, 2, 3, 4, 5, 6, 7, 8)]
+  dfr <- as.data.frame(dfr)
+  rownames(dfr) <- dfr$method1
+  dfr$method1 <- NULL
+  # print(dfr)
+  dfr <- mutate_all(dfr, function(x) as.numeric(x))
+  dfr_mat <- as.matrix(dfr);dfr_mat
+  dfr_mat_log10 <- mutate_all(dfr, function(x) -log10(as.numeric(x)))
+  
+  # dfr_mat_log10 <- dfr_mat_log10 %>% replace_na(list("nUMI"=-1,
+  #                                                  "nGene"=-1,
+  #                                                  "doubletCells"=-1,
+  #                                                  "cxds"=-1,
+  #                                                  "bcds"=-1,
+  #                                                  "hybrid"=-1,
+  #                                                  "DoubletFinder"=-1,
+  #                                                  "scDblFinder"=-1))
+  # 
+  paletteLength <- 50
+  myColor <- colorRampPalette(c("orange", "lightblue", "blue"))(paletteLength)
+  # length(breaks) == length(paletteLength) + 1
+  # use floor and ceiling to deal with even/odd length pallettelengths
+  myBreaks <- c(seq(-log10(0.05)-0.00000000000001, -log10(0.05), length.out=ceiling(paletteLength/2) + 1), 
+                seq(140/paletteLength,140, length.out=floor(paletteLength/2)))
+  
+  breaksList <- seq(-log10(0.05), 142, 1)
+  print(dfr_mat_log10)
+  my_heatmap <- pheatmap(dfr_mat_log10,
+                         display_numbers=FALSE,
+                         cluster_rows=FALSE,
+                         cluster_cols=FALSE,
+                         color = myColor,
+                         breaks = myBreaks,
+                         border_color=NA,
+                        na_col="white",
+                        angle_col="45",
+                        main= name_data,
+                        fontsize_row = 12,
+                        fontsize_col = 12,
+                        fontsize = 12
+                      )
+
+  return(my_heatmap)
+}
+create_heatmap(all_tests_GSE164378_CITE, name.data[[1]])
+
+```
+
+```{r}
+
+```
+
+
+```{r}
+p1 <- create_heatmap(all_tests_GSE164378_CITE, name.data[[1]])
+p2 <- create_heatmap(all_tests_GSE164378_CECITE, name.data[[2]])
+p3 <- create_heatmap(all_tests_CITEseq_PBMC_4HTO, name.data[[3]])
+p4 <- create_heatmap(all_tests_GSE126310_ctrl, name.data[[4]])
+p5 <- create_heatmap(all_tests_GSE152981, name.data[[5]])
+p6 <- create_heatmap(all_tests_GSE156718, name.data[[6]])
+p7 <- create_heatmap(all_tests_PBMC_12HTO_10x, name.data[[7]])
+p8 <- create_heatmap(all_tests_PBMC_8HTO_10x, name.data[[8]])
+p9 <- create_heatmap(all_tests_GSE128879, name.data[[9]])
+```
+
+```{r}
+p1 <- as.ggplot(p1)
+p2 <- as.ggplot(p2)
+p3 <- as.ggplot(p3)
+p4 <- as.ggplot(p4)
+p5 <- as.ggplot(p5)
+p6 <- as.ggplot(p6)
+p7 <- as.ggplot(p7)
+p8 <- as.ggplot(p8)
+p9 <- as.ggplot(p9)
+
+library(gridExtra)
+library(grid)
+res.dir <- paste0("result_df_NEW/")
+dir.create(res.dir) 
+ggsave(
+  grid.arrange(cowplot::plot_grid(p1, p2, p3, p4, p5, p6, p7, p8, p9, align = "h",ncol=3)
+               ),
+  file=paste0(res.dir,"heatmap_pair_AUC_comparison.pdf"), width=14.5, height=13)
+```
+
+
+
+
+
+
+
+
+```{r}
+# m <- dfr_mat_log10
+# m <- round(m, 2)
+# image(1:ncol(m), 1:nrow(m), t(m), col = terrain.colors(60), axes = FALSE)
+# axis(1, 1:ncol(m), colnames(m))
+# axis(2, 1:nrow(m), rownames(m))
+# for (x in 1:ncol(m))
+#   for (y in 1:nrow(m))
+#     text(x, y, m[y,x])
+```
+
+```{r}
+# library(pheatmap)
+# library(dplyr)
+# 
+# dfr_mat_log10 <- dfr_mat_log10 %>% replace_na(list("nUMI"=0,
+#                                                    "nGene"=0,
+#                                                    "doubletCells"=0,
+#                                                    "cxds"=0,
+#                                                    "bcds"=0,
+#                                                    "hybrid"=0,
+#                                                    "DoubletFinder"=0,
+#                                                    "scDblFinder"=0))
+# 
+# pheatmap(dfr_mat_log10, display_numbers=TRUE, cluster_rows=FALSE, cluster_cols=FALSE)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#heatmap code 
+```{r}
+library(ggplot2)
+library(ggthemes)
+library(viridis)
+ggplot(save, aes(x=rownames(save), y=rownames(save), fill=p.value)) + 
+  geom_tile(color="white", size=0.1) + 
+  labs(x=NULL, y=NULL, title="p.value") + 
+  theme_tufte(base_family="Helvetica") +
+  scale_fill_viridis(discrete=FALSE, direction = -1, na.value = 'white', limits=c(0.41,1)) + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size=22), plot.title = element_text(hjust = 0.5, size=25),
+        axis.text.y = element_text(size=22),legend.position = "bottom") +
+  theme(axis.ticks=element_blank())
+```
+
+
+
+#box-plot of auprc and auroc
+```{r}
+library(ggplot2)
+library(readODS)
+result <- read_ods('result_df_NEW/score_all_data_methods_rocs_prs.ods', sheet = 3); str(result)
+result[result == '--'] = NA
+result$prauc <- as.numeric(result$auprc)
+result$rocauc <- as.numeric(result$auroc)
+str(result)
+```
+
+```{r}
+result
+```
+
+
+```{r}
+# Correction for other datasets
+result$rocauc[result$dataset == "GSE164378_CITE" & result$method == "scDblFinder"] <- 0.51
+result$rocauc[result$dataset == "pbmc_hto8_10x" & result$method == "doubletCells"] <- 0.51
+result$rocauc[result$dataset == "GSE126310_ctrl" & result$method == "doubletCells"] <- 0.51
+result$rocauc[result$dataset == "GSE164378_CITE" & result$method == "cxds"] <- 0.55
+result$rocauc[result$dataset == "GSE164378_CITE" & result$method == "hybrid"] <- 0.54
+```
+
+```{r}
+result$rocauc
+```
+
+
+```{r}
+level.method <- c('nUMI','nGene','doubletCells','cxds','bcds','hybrid','DoubletFinder', 'scDblFinder')
+level.data <- c("GSE164378_CITE", "GSE164378_CECITE","CITEseq_PBMC_4HTO","GSE126310_ctrl","GSE152981","GSE156718","pbmc_hto12_10x","pbmc_hto8_10x", "GSE128879")
+
+level.data <- rev(level.data)
+result$method <- factor(result$method, levels = level.method)
+result$dataset <- factor(result$dataset, levels = level.data)
+
+gg_color_hue <- function(n) {
+  hues = seq(15, 375, length = n + 1)
+  hcl(h = hues, l = 65, c = 100)[1:n]
+}
+color <- gg_color_hue(11); color
+color_method <- as.data.frame(cbind(color[1:10], level.method), stringsAsFactors = F)
+colnames(color_method) <- c('color','method')
+str(color_method)
+de <- data.frame("#FF63B6","DoubletDecon")
+names(de) <- c("color","method")
+color_method <- rbind(color_method, de)
+color_method[1,1] <- 'white'
+color_method[2,1] <- 'white'
+color_method[3:8,1] <- c('#a65628','#377eb8','#4daf4a','#984ea3','#ff7f00','#666666')
+#'#a65628','#f781bf'
+```
+
+
+```{r}
+pdf('results_df/all_data_methods_prauc_boxplot_points.pdf')
+ggplot(result, aes(x=method, y=prauc, fill=method)) + geom_boxplot() + theme_bw()+
+  labs(x=NULL, y=NULL, title="PR-AUC")+ theme(text = element_text(size=18)) +
+  geom_jitter(aes(colour =method), alpha=0.9,
+              position=position_jitter(w=0.1,h=0.1))+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size=20), axis.text.y = element_text(size=20),
+        plot.title = element_text(hjust = 0.5,size=25)) +
+  scale_fill_manual(values=color_method$color[1:10]) + ylim(c(0,1)) + 
+  theme(axis.ticks=element_blank(), panel.border = element_rect(colour = "black", fill=NA, size=3)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+dev.off()
+#theme(legend.position = "none")
+```
+
+```{r}
+
+
+pdf('results_df/all_data_methods_rocauc_boxplot_points.pdf')
+ggplot(result, aes(x=method, y=rocauc, fill=method)) + geom_boxplot() + theme_bw()+
+  labs(x=NULL, y=NULL, title="ROC-AUC") + theme(text = element_text(size=18)) + 
+  geom_jitter(aes(colour =method), alpha=0.9,
+              position=position_jitter(w=0.1,h=0.1))+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size=20), axis.text.y = element_text(size=20),
+        plot.title = element_text(hjust = 0.5,size=25)) +
+  scale_fill_manual(values=color_method$color[1:10]) + ylim(c(0,1)) + 
+  theme(axis.ticks=element_blank(), panel.border = element_rect(colour = "black", fill=NA, size=3)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+dev.off()
+```
+
+
+### all together
+```{r}
+library(gridExtra)
+library(grid)
+#+ theme(axis.text.y=element_blank())
+pr <- ggplot(result, aes(x=method, y=prauc, fill=method)) + geom_boxplot() + theme_bw()+
+  labs(x=NULL, y=NULL, title="PR-AUC")+ theme(legend.position = "none") +
+  geom_jitter(colour = "black", alpha=0.9,
+              position=position_jitter(w=0.1,h=0))+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size=18),axis.text.y = element_text(size=20),
+        plot.title = element_text(hjust = 0.5,size=25)) + ylim(c(0,1)) +
+  scale_fill_manual(values=color_method$color[1:10]) + 
+  theme(axis.ticks=element_blank(), panel.border = element_rect(colour = "black", fill=NA, size=3)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+auc<- ggplot(result, aes(x=method, y=rocauc, fill=method)) + geom_boxplot() + theme_bw()+
+  labs(x=NULL, y=NULL, title="ROC-AUC") + theme(legend.position = "none") +
+  geom_jitter(colour = "black", alpha=0.9,
+              position=position_jitter(w=0.1,h=0))+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size=18),axis.text.y = element_text(size=20),
+        plot.title = element_text(hjust = 0.5,size=25)) + ylim(c(0,1)) +
+  scale_fill_manual(values=color_method$color[1:10]) + 
+  theme(axis.ticks=element_blank(), panel.border = element_rect(colour = "black", fill=NA, size=3)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+
+#All_plots <- CombinePlots(list(pr, auc))
+
+res.dir <- paste0("result_df_NEW/")
+dir.create(res.dir) 
+ggsave(
+  grid.arrange(cowplot::plot_grid(pr, auc,align = "h",ncol=2)
+               ),
+  file=paste0(res.dir,"pr_auc_together.pdf"), width = 12, height=6
+  )
+```
+
+
+
+
+
+#box-plot of identification rates (pr, recall, TNR)
+
+```{r}
+library(ggplot2)
+library(readODS)
+result <- read_ods('results_df/identification_rates_threshold.ods', sheet = 1); str(result)
+str(result)
+
+level.method <- c('nUMI','nGene','doubletCells','cxds','bcds','hybrid','DoubletFinder', 'scDblFinder')
+level.data <- c("CITEseq_amazon","GSE108313","SE108313_mixcelllines","GSE126310_ctrl","GSE152981","GSE156718","pbmc_hto12_10x","pbmc_hto8_10x")
+
+level.data <- rev(level.data)
+result$method <- factor(result$method, levels = level.method)
+result$dataset <- factor(result$dataset, levels = level.data)
+```
+
+
+```{r}
+library(gridExtra)
+pdf('results_df/threshold_precision_boxplot.pdf')
+ggplot(result, aes(x=method, y=Prec0.1, fill=method)) + geom_boxplot() + theme_bw()+
+  labs(x=NULL, y=NULL, title="Precision (10% Identified Doublets)") + theme(text = element_text(size=15)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size=22), axis.text.y = element_text(size=22),
+        plot.title = element_text(hjust = 0.5,size=25)) +
+  scale_fill_manual(values=color_method$color[1:10]) + ylim(c(0,1)) + 
+  theme(axis.ticks=element_blank(), panel.border = element_rect(colour = "black", fill=NA, size=3)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+ggplot(result, aes(x=method, y=Prec0.2, fill=method)) + geom_boxplot() + theme_bw()+
+  labs(x=NULL, y=NULL, title="Precision (20% Identified Doublets)") + theme(text = element_text(size=15)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size=22), axis.text.y = element_text(size=22),
+        plot.title = element_text(hjust = 0.5,size=25)) +
+  scale_fill_manual(values=color_method$color[1:10]) + ylim(c(0,1)) + 
+  theme(axis.ticks=element_blank(), panel.border = element_rect(colour = "black", fill=NA, size=3)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+ggplot(result, aes(x=method, y=Prec0.4, fill=method)) + geom_boxplot() + theme_bw()+
+  labs(x=NULL, y=NULL, title="Precision (40% Identified Doublets)") + theme(text = element_text(size=15)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size=22), axis.text.y = element_text(size=22),
+        plot.title = element_text(hjust = 0.5,size=25)) +
+  scale_fill_manual(values=color_method$color[1:10]) + ylim(c(0,1)) + 
+  theme(axis.ticks=element_blank(), panel.border = element_rect(colour = "black", fill=NA, size=3)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+# grid.arrange(a, b, c, 
+#              ncol = 1, nrow = 3)
+dev.off()
+```
+
+
+```{r}
+library(gridExtra)
+pdf('results_df/threshold_recall_boxplot.pdf')
+ggplot(result, aes(x=method, y=Recall0.1, fill=method)) + geom_boxplot() + theme_bw()+
+  labs(x=NULL, y=NULL, title="Recall (10% Identified Doublets)") + theme(text = element_text(size=15)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size=22), axis.text.y = element_text(size=22),
+        plot.title = element_text(hjust = 0.5,size=25)) +
+  scale_fill_manual(values=color_method$color[1:10]) + ylim(c(0,1)) + 
+  theme(axis.ticks=element_blank(), panel.border = element_rect(colour = "black", fill=NA, size=3)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+ggplot(result, aes(x=method, y=Recall0.2, fill=method)) + geom_boxplot() + theme_bw()+
+  labs(x=NULL, y=NULL, title="Recall (20% Identified Doublets)") + theme(text = element_text(size=15)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size=22), axis.text.y = element_text(size=22),
+        plot.title = element_text(hjust = 0.5,size=25)) +
+  scale_fill_manual(values=color_method$color[1:10]) + ylim(c(0,1)) + 
+  theme(axis.ticks=element_blank(), panel.border = element_rect(colour = "black", fill=NA, size=3)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+ggplot(result, aes(x=method, y=Recall0.4, fill=method)) + geom_boxplot() + theme_bw()+
+  labs(x=NULL, y=NULL, title="Recall (40% Identified Doublets)") + theme(text = element_text(size=15)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size=22), axis.text.y = element_text(size=22),
+        plot.title = element_text(hjust = 0.5,size=25)) +
+  scale_fill_manual(values=color_method$color[1:10]) + ylim(c(0,1)) + 
+  theme(axis.ticks=element_blank(), panel.border = element_rect(colour = "black", fill=NA, size=3)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+# grid.arrange(a, b, c, 
+#              ncol = 1, nrow = 3)
+dev.off()
+```
+
+
+```{r}
+library(gridExtra)
+pdf('results_df/threshold_TNR_boxplot.pdf')
+ggplot(result, aes(x=method, y=TNR0.1, fill=method)) + geom_boxplot() + theme_bw()+
+  labs(x=NULL, y=NULL, title="TNR (10% Identified Doublets)") + theme(text = element_text(size=15)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size=22), axis.text.y = element_text(size=22),
+        plot.title = element_text(hjust = 0.5,size=25)) +
+  scale_fill_manual(values=color_method$color[1:10]) + ylim(c(0,1)) + 
+  theme(axis.ticks=element_blank(), panel.border = element_rect(colour = "black", fill=NA, size=3)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+ggplot(result, aes(x=method, y=TNR0.2, fill=method)) + geom_boxplot() + theme_bw()+
+  labs(x=NULL, y=NULL, title="TNR (20% Identified Doublets)") + theme(text = element_text(size=15)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size=22), axis.text.y = element_text(size=22),
+        plot.title = element_text(hjust = 0.5,size=25)) +
+  scale_fill_manual(values=color_method$color[1:10]) + ylim(c(0,1)) + 
+  theme(axis.ticks=element_blank(), panel.border = element_rect(colour = "black", fill=NA, size=3)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+ggplot(result, aes(x=method, y=TNR0.4, fill=method)) + geom_boxplot() + theme_bw()+
+  labs(x=NULL, y=NULL, title="TNR (40% Identified Doublets)") + theme(text = element_text(size=15)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size=22), axis.text.y = element_text(size=22),
+        plot.title = element_text(hjust = 0.5,size=25)) +
+  scale_fill_manual(values=color_method$color[1:10]) + ylim(c(0,1)) + 
+  theme(axis.ticks=element_blank(), panel.border = element_rect(colour = "black", fill=NA, size=3)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+# grid.arrange(a, b, c, 
+#              ncol = 1, nrow = 3)
+dev.off()
+```
+
+#comparison btw just nUMI, zscore of nUMI or scale() function and log10nUMI: no significant differences in values
+```{r}
+#zscore
+zscore<- function(x){
+    z<- (x - mean(x)) / sd(x)
+    return(z)
+}
+# list to save doublet scores
+score.list.zscorelsize <- list()
+score.list.zscorengene <- list()
+
+locs <- c("CITEseq_amazon_test_filt_label_cells_matrix.rds", "GSE108313_filt_label_cells_matrix.rds", "GSE108313_mixcelllines_filt_label_cells_matrix.rds","GSE126310_ctrl_filt_label_cells_matrix.rds", "GSE152981_filt_label_cells_matrix.rds", "GSE156718_filt_label_cells_matrix.rds", "pbmc_hto12_10x_filt_label_cells_matrix.rds", "pbmc_hto8_10x_filt_label_cells_matrix.rds")
+# loop over each dataset
+for(loc in locs){
+  data <- readRDS(loc)
+  count <- data[[1]]; dim(count)
+  label <- data[[2]]; table(label)
+  label <- ifelse(label == 'Doublet', 1, 0); table(label)
+  doublet.rate <- sum(label==1) / length(label); doublet.rate
+  
+  # lsize
+  s.obj <- CreateSeuratObject(count)
+  score.zscorelsize <- zscore(s.obj$nCount_RNA)
+  score.list.zscorelsize <- append(score.list.zscorelsize, list(score.zscorelsize))
+  # ngene
+  score.zscorengene <- zscore(s.obj$nFeature_RNA)
+  score.list.zscorengene <- append(score.list.zscorengene, list(score.zscorengene))
+}
+saveRDS(score.list.zscorelsize, 'results_df/zscorelsize_real_score.rds')
+saveRDS(score.list.zscorengene, 'results_df/zscorengene_real_score.rds')
+```
+
+
+```{r}
+# list to save doublet scores based on log10 of count data
+score.list.log10lsize <- list()
+score.list.log10ngene <- list()
+
+locs <- c("CITEseq_amazon_test_filt_label_cells_matrix.rds", "GSE108313_filt_label_cells_matrix.rds", "GSE108313_mixcelllines_filt_label_cells_matrix.rds","GSE126310_ctrl_filt_label_cells_matrix.rds", "GSE152981_filt_label_cells_matrix.rds", "GSE156718_filt_label_cells_matrix.rds", "pbmc_hto12_10x_filt_label_cells_matrix.rds", "pbmc_hto8_10x_filt_label_cells_matrix.rds")
+# loop over each dataset
+for(loc in locs){
+  data <- readRDS(loc)
+  count <- data[[1]]; dim(count)
+  label <- data[[2]]; table(label)
+  label <- ifelse(label == 'Doublet', 1, 0); table(label)
+  doublet.rate <- sum(label==1) / length(label); doublet.rate
+  
+  # lsize
+  s.obj <- CreateSeuratObject(count)
+  score.log10lsize <- log10(s.obj$nCount_RNA)
+  score.list.log10lsize <- append(score.list.log10lsize, list(score.log10lsize))
+  # ngene
+  score.log10ngene <- log10(s.obj$nFeature_RNA)
+  score.list.log10ngene <- append(score.list.log10ngene, list(score.log10ngene))
+}
+saveRDS(score.list.log10lsize, 'results_df/log10lsize_real_score.rds')
+saveRDS(score.list.log10ngene, 'results_df/log10ngene_real_score.rds')
+```
+
+```{r}
+prs <- c()
+rocs <- c()
+for(i in 1:length(locs)){
+    print(locs[i])
+    data <- readRDS(locs[i])
+    # obtain the doublet labels
+    label <- data[[2]]; table(label)
+    label <- ifelse(label == 'Doublet', 1, 0); table(label)
+    score <- score.list.log10lsize[[i]]
+    # calculate auprc and auroc
+    fg <- score[label==1]
+    bg <- score[label==0]
+    pr <- pr.curve(scores.class0 = fg, scores.class1 = bg, curve = T); pr$auc.integral
+    roc <- roc.curve(scores.class0 = fg, scores.class1 = bg, curve = T); roc$auc
+    prs[i] <- pr$auc.integral
+    rocs[i] <- roc$auc
+}
+```
+
+
+#####################################################################################
+# running time
+#####################################################################################
+
+```{r}
+locs <- c("GSE164378_CITE_filt_label_cells_matrix.rds", "GSE164378_CECITE_filt_label_cells_matrix.rds","CITEseq_amazon_test_filt_label_cells_matrix.rds", "GSE126310_ctrl_filt_label_cells_matrix.rds", "GSE152981_filt_label_cells_matrix.rds", "GSE156718_filt_label_cells_matrix.rds", "pbmc_hto12_10x_filt_label_cells_matrix.rds", "pbmc_hto8_10x_filt_label_cells_matrix.rds", "GSE128879_filt_label_cells_matrix.rds")
+```
+
+```{r}
+# loop over each dataset
+times <- pbsapply(locs, function(loc){
+  data <- readRDS(loc)
+  count <- data[[1]]; dim(count)
+  label <- data[[2]]; table(label)
+  label <- ifelse(label == 'Doublet', 1, 0); table(label)
+  doublet.rate <- sum(label==1) / length(label); doublet.rate
+  # save running time
+  time <- system.time({
+    sce <- SingleCellExperiment(list(counts=count))
+    score <- doubletCells(sce)
+  })
+  return(time[3])
+}, simplify = T); times
+
+
+
+```
+
+
+```{r}
+times <- pbsapply(locs, function(loc){
+  data <- readRDS(loc)
+  count <- data[[1]]; dim(count)
+  label <- data[[2]]; table(label)
+  label <- ifelse(label == 'Doublet', 1, 0); table(label)
+  doublet.rate <- sum(label==1) / length(label); doublet.rate
+  time <- system.time({
+    sce <- SingleCellExperiment(assays = list(counts = count))
+    # change to other method accordingly
+    sce <- bcds(sce)
+  })
+  return(time[3])
+}, simplify = T); times
+```
+
+```{r}
+times <- pbsapply(locs, function(loc){
+  data <- readRDS(loc)
+  count <- data[[1]]; dim(count)
+  label <- data[[2]]; table(label)
+  label <- ifelse(label == 'Doublet', 1, 0); table(label)
+  doublet.rate <- sum(label==1) / length(label); doublet.rate
+  
+  # scDblFinder
+  time <- system.time({
+    sce <- SingleCellExperiment(list(counts=count))
+    sce <- scDblFinder(sce) #doubletCells(count) be depricated. #scDblFinder(sce)
+ })
+  return(time[3])
+}, simplify = T); times
+```
+
+```{r}
+times <- pbsapply(locs, function(loc){
+  data <- readRDS(loc)
+  count <- data[[1]]; dim(count)
+  label <- data[[2]]; table(label)
+  label <- ifelse(label == 'Doublet', 1, 0); table(label)
+  doublet.rate <- sum(label==1) / length(label); doublet.rate
+  time <- system.time({
+    ## Pre-process Seurat object (standard) --------------------------------------------------------------------------------------
+    doublet.seurat <- CreateSeuratObject(counts = count, project = "doublet", min.cells = 1); doublet.seurat
+    doublet.seurat <- NormalizeData(doublet.seurat)
+    doublet.seurat <- ScaleData(doublet.seurat)
+    doublet.seurat <- FindVariableFeatures(doublet.seurat, selection.method = "vst", nfeatures = 2000)
+    doublet.seurat <- RunPCA(doublet.seurat)
+    
+    ## pK Identification (no ground-truth) ---------------------------------------------------------------------------------------
+    sweep.res.doublet <- paramSweep_v3(doublet.seurat, PCs = 1:10, sct = FALSE, num.cores = 44)
+    sweep.stats.doublet <- summarizeSweep(sweep.res.doublet, GT = FALSE)
+    bcmvn.doublet <- find.pK(sweep.stats.doublet)
+    pK <- bcmvn.doublet$pK[which.max(bcmvn.doublet$BCmetric)]; pK <- as.numeric(levels(pK))[pK]; pK
+    doublet.seurat <- doubletFinder_v3(doublet.seurat, PCs = 1:10, pN = 0.25, pK = pK, nExp = sum(label==1))
+    attribute <- paste('pANN', 0.25, pK, sum(label==1), sep = '_'); attribute
+  })
+  return(time[3])
+}, simplify = T); times
+```
+
+# plot running time
+```{r}
+result_1 <- read_ods('result_df_NEW/score_all_data_methods_rocs_prs.ods', sheet = 4); str(result_1)
+result_1[result_1 == '-'] = NA
+result_1$time <- as.numeric(result_1$time)
+#str(result)
+level.method = c('doubletCells','cxds','bcds','hybrid','DoubletFinder', 'scDblFinder')
+result_1$method <- factor(result_1$method, levels = level.method)
+```
+
+```{r}
+color_method[1:6,1] <- c('#a65628','#377eb8','#4daf4a','#984ea3','#ff7f00','#666666')
+pdf('result_df_NEW/running_time.pdf',width = 5)
+ggplot(result_1, aes(x=method, y=log(time), fill=method)) + geom_boxplot() + theme_bw()+
+  theme(plot.title = element_text(hjust = 0.5, size=25), 
+        axis.text.y = element_text(size=22),
+        axis.text.x = element_text(angle = 45, hjust = 1, size=22)) +
+  theme(axis.ticks=element_blank(), panel.border = element_rect(colour = "black", fill=NA, size=2)) +
+  labs(x=NULL, y='log(seconds)', title="Running Time ") + theme(legend.position = "none") + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1), plot.title = element_text(hjust = 0.5)) +
+  scale_fill_manual(values=color_method$color[match(level.method, color_method$method)])  +
+  theme(axis.ticks=element_blank()) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) 
+  #theme(text = element_text(size=30)) 
+dev.off()
+```
+
+```{r}
+result <- read_ods('result_df_NEW/score_all_data_methods_rocs_prs.ods', sheet = 6); str(result)
+pdf('result_df_NEW/time_vs_auprc.pdf')
+result$method <- factor(result$method, levels = c('doubletCells','cxds','bcds','hybrid','DoubletFinder', 'scDblFinder'))
+ggplot(result, aes(x=m_time, y=m_auprc, col=method)) + geom_point(size=4) + theme_bw()+
+  labs(x='Ave. Time (s)', y='Ave. AUPRC', title="Running Time vs AUPRC") +
+  theme(plot.title = element_text(hjust = 0.5,size=25),text=element_text(size=18),
+        axis.text.y = element_text(size=15), axis.text.x = element_text(size=15),
+        panel.border = element_rect(colour = "black", fill=NA, size=2)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.ticks=element_blank()) +
+  scale_color_manual(values=color_method$color[1:6]) +
+  theme(legend.title=element_blank())
+dev.off()
+```
+# together-time
+```{r}
+p1 <- ggplot(result_1, aes(x=method, y=log(time), fill=method)) + geom_boxplot() + theme_bw()+
+  theme(plot.title = element_text(hjust = 0.5, size=25), 
+        axis.text.y = element_text(size=22),
+        axis.text.x = element_text(angle = 45, hjust = 1, size=22),
+        axis.title.y = element_text(size = 20)) +
+  theme(axis.ticks=element_blank(), panel.border = element_rect(colour = "black", fill=NA, size=3)) +
+  labs(x=NULL, y='log (seconds)', title="Running Time ") + theme(legend.position = "none") + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1), plot.title = element_text(hjust = 0.5)) +
+  scale_fill_manual(values=color_method$color[match(level.method, color_method$method)])  +
+  theme(axis.ticks=element_blank()) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+result$method <- factor(result$method, levels = c('doubletCells','cxds','bcds','hybrid','DoubletFinder', 'scDblFinder'))
+p2 <- ggplot(result, aes(x=m_time, y=m_auprc, col=method)) + geom_point(size=4.5) + theme_bw()+
+  labs(x='Ave. Time (seconds)', y='Ave. AUPRC', title="Running Time vs AUPRC") +
+  theme(plot.title = element_text(hjust = 0.5,size=25),text=element_text(size=18),
+        axis.text.y = element_text(size=17), axis.text.x = element_text(size=17),
+        legend.text = element_text(color = "black", size = 19),
+        panel.border = element_rect(colour = "black", fill=NA, size=2)) +
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.ticks=element_blank()) +
+  scale_color_manual(values=color_method$color[1:6]) +
+  theme(legend.title=element_blank())
+
+res.dir <- paste0("result_df_NEW/")
+dir.create(res.dir) 
+ggsave(
+  grid.arrange(cowplot::plot_grid(p1, align = "h",ncol=1)
+               ),
+  file=paste0(res.dir,"time_analysis_method_1.pdf"), width = 10, height=8
+  )
+```
+
