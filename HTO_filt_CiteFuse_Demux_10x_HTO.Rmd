@@ -1,0 +1,1107 @@
+---
+title: "HTO_filtering_10x_8HTO"
+output: html_document
+---
+
+```{r}
+library(CiteFuse)
+library(scater)
+library(SingleCellExperiment)
+library(DT)
+library(Seurat)
+library(DoubletFinder)
+```
+
+```{r}
+#setwd("/home/faezeh/Documents/")
+
+```
+
+
+```{r}
+# setwd("/home/faezeh/Documents/my_documents(old)/")
+# pbmc.umis <- readRDS("HTODemuxFiles/pbmc_umi_mtx.rds")
+# seuratobj_umi <- CreateSeuratObject(counts = pbmc.umis)
+# pbmc.hto <- readRDS("HTODemuxFiles/pbmc_hto_mtx.rds")
+```
+
+
+```{r}
+# setwd("/home/faezeh/Documents/my_documents(old)/")
+# sce_cite <- preprocessing(list(RNA = pbmc.umis,
+#                                   HTO = pbmc.hto))
+```
+
+#12HTO 10x
+
+```{r, setup, include=FALSE}
+knitr::opts_knit$set(root.dir = '/home/rstudio/01_data/Faezeh/')
+```
+
+```{r}
+
+# Read in UMI count matrix for RNA
+hto12.umis <- readRDS("HTOdemuxFiles/hto12_umi_mtx.rds")
+
+# Read in HTO count matrix
+hto12.htos <- readRDS("HTOdemuxFiles/hto12_hto_mtx.rds")
+
+# Select cell barcodes detected in both RNA and HTO
+cells.use <- intersect(rownames(hto12.htos), colnames(hto12.umis))
+
+# Create Seurat object and add HTO data
+hto12 <- CreateSeuratObject(counts = hto12.umis[, cells.use], min.features = 300)
+hto12[["HTO"]] <- CreateAssayObject(counts = t(x = hto12.htos[colnames(hto12), 1:12]))
+
+# Normalize data
+hto12 <- NormalizeData(hto12)
+hto12 <- NormalizeData(hto12, assay = "HTO", normalization.method = "CLR")
+```
+
+```{r}
+hto12 <- HTODemux(hto12, assay = "HTO", positive.quantile = 0.99)
+```
+
+
+```{r}
+#RidgePlot(hto12, assay = "HTO", features = c("K562-B", "THP1-C"), ncol = 2)
+```
+
+
+```{r}
+table(hto12$HTO_classification.global)
+```
+
+#remove low quality cells:
+
+```{r}
+# Setup Seurat object metadata
+hto12$log10nUMI <- log10(hto12$nCount_RNA)
+hto12$log10nGene <- log10(hto12$nFeature_RNA)
+hto12$mitoRatio <- PercentageFeatureSet(object = hto12, pattern = "^MT-")
+hto12$mitoRatio <- hto12@meta.data$mitoRatio / 100
+hto12$pct_mt <- hto12@meta.data$mitoRatio * 100
+metadata <- hto12@meta.data
+
+```
+
+```{r}
+head(as.data.frame(metadata))
+```
+
+
+#outlier histogram
+```{r}
+library(mixtools)
+outlier_Histogram <- function(data, x, sigmas = 1:3, bins = 100,
+                             show_zero = FALSE) {
+  x_data <- data[, x]
+  
+  mixmdl = normalmixEM(x_data, k=2,maxit=10000,epsilon=1e-08, maxrestarts = 1000)
+  #mu <- mixmdl$mu[2]
+  #sigma <- mixmdl$sigma[2]
+  mu <- mean(x_data)
+  sigma <- sd(x_data)
+  
+  outs <- lapply(sigmas, function(n) {
+    lower  <- mu - n * sigma
+    higher <- mu + n * sigma
+    n_low  <- sum(x_data < lower)
+    n_high <- sum(x_data > higher)
+    
+    list(n = n, lower = lower, higher = higher,
+         n_low = n_low, n_high = n_high)
+  })
+  sdnorm =
+    function(x, mean=0, sd=1, lambda=1){lambda*dnorm(x, mean=mean, sd=sd)}
+  
+  gg <- ggplot(data, aes(x = !!ensym(x))) +
+    geom_histogram(bins = 100, color = "black", fill = "gray",  
+                   aes(y=..density.., fill=..count..)) +
+    geom_vline(xintercept = mu, colour = "blue", linetype = "dashed") +
+    annotate("text", x = mu, y = 0, label = "Mean", colour = "blue",
+             angle = 90, hjust = -0.1, vjust = -0.5) +
+    annotate("text", x = mu, y = Inf, label = round(mu, 3), colour = "blue",
+             angle = 90, hjust = 1, vjust = -0.5)+
+    #stat_function(fun=sdnorm,args=list(mean=mixmdl$mu[1],sd=mixmdl$sigma[1], lambda=mixmdl$lambda[1]), color ="black")+
+    #stat_function(fun=sdnorm,args=list(mean=mixmdl$mu[2],sd=mixmdl$sigma[2], lambda=mixmdl$lambda[2]),color =  "black")+
+    theme_minimal() +
+    ylab("density")+
+    theme(legend.position = "none")+
+    ggtitle("")
+  
+  
+  for (i in seq_along(outs)) {
+    out <- outs[[i]]
+    
+    if (show_zero) {
+      show_low  <- TRUE
+      show_high <- TRUE
+    } else {
+      show_low  <- out$n_low > 0
+      show_high <- out$n_high > 0
+    }
+    
+    if (show_low) {
+      gg <- gg +
+        geom_vline(xintercept = out$lower, colour = "red", linetype = "dashed") +
+        annotate("text", x = out$lower, y = 0,
+                 label = paste0(out$n, " SD"), colour = "red",
+                 angle = 90, hjust = -0.1, vjust = -0.5) +
+        annotate("text", x = out$lower, y = Inf,
+                 label = paste0(round(out$lower, 3),
+                                " (", out$n_low, " lower)"),
+                 colour = "red", angle = 90, hjust = 1, vjust = -0.5)
+    }
+    
+    
+    if (show_high) {
+      gg <- gg +
+        geom_vline(xintercept = out$higher, colour = "red", linetype = "dashed") +
+        annotate("text", x = out$higher, y = 0,
+                 label = paste0(out$n, "SD"), colour = "red",
+                 angle = 90, hjust = -0.1, vjust = -0.5) +
+        annotate("text", x = out$higher, y = Inf,
+                 label = paste0(round(out$higher, 3),
+                                " (", out$n_high, " higher)"),
+                 colour = "red", angle = 90, hjust = 1, vjust = -0.5)
+    }
+  }
+  
+  
+  return(gg)
+}
+
+#pdf(file='CiteFuse_method_hto_filt/umifilt_outliers_12hto_10xdataset.pdf', width = 15, height = 10)
+outlier_Histogram(metadata, "log10nGene", sigmas = c(2,2.5, 3, 4))
+#dev.off()
+```
+```{r}
+statt <- summary(metadata$log10nUMI);statt
+st_dev <- sd(metadata$log10nUMI);st_dev
+lower_umi <- 3.607-(3*0.3812185);lower_umi
+```
+
+```{r}
+statt <- summary(metadata$log10nGene);statt
+st_dev <- sd(metadata$log10nGene);st_dev
+lower_gene <- 3.255-(3*0.2712641);lower_gene
+```
+
+```{r}
+outlierHistogram <- function(data, x, mads = 1:3, bins = 100,
+                             show_zero = FALSE) {
+  x_data <- data[, x]
+  med    <- median(x_data)
+  MAD    <- mad(x_data, center = med, na.rm = TRUE)
+  
+  outs <- lapply(mads, function(n) {
+    lower  <- med - n * MAD
+    higher <- med + n * MAD
+    n_low  <- sum(x_data < lower)
+    n_high <- sum(x_data > higher)
+
+    list(n = n, lower = lower, higher = higher,
+         n_low = n_low, n_high = n_high)
+    
+  })
+    gg <- ggplot(data, aes(x = !!ensym(x))) +
+      geom_histogram(bins = 100, color = "black", fill = "gray"
+                     )+ #aes(y=..density.., fill=..count..) inside of geom_histogram
+      geom_vline(xintercept = med, colour = "blue", linetype = "dashed") +
+      annotate("text", x = med, y = 0, label = "Median", colour = "blue",
+               angle = 90, hjust = -0.1, vjust = -0.5) +
+      annotate("text", x = med, y = Inf, label = round(med, 3), colour = "blue",
+               angle = 90, hjust = 1, vjust = -0.5) +
+      theme_minimal() +
+      ylab("frequency")+
+      theme(legend.position = "none")+
+      ggtitle("")
+      # stat_function(fun=dnorm, color="red", args=list(mean=mean(x_data),
+      #                                                     sd=sd(x_data)))
+      
+      
+    cols <- scales::brewer_pal(palette = "Reds",
+                               direction = -1)(length(mads) + 1)
+    
+    for (i in seq_along(outs)) {
+      out <- outs[[i]]
+      
+      if (show_zero) {
+        show_low  <- TRUE
+        show_high <- TRUE
+      } else {
+        show_low  <- out$n_low > 0
+        show_high <- out$n_high > 0
+      }
+      
+      if (show_low) {
+        gg <- gg +
+          geom_vline(xintercept = out$lower, colour = cols[i], linetype = "dashed") +
+          annotate("text", x = out$lower, y = 0,
+                   label = paste0(out$n, " MADs"), colour = cols[i],
+                   angle = 90, hjust = -0.1, vjust = -0.5) +
+          annotate("text", x = out$lower, y = Inf,
+                   label = paste0(round(out$lower, 3),
+                                  " (", out$n_low, " lower)"),
+                   colour = cols[i], angle = 90, hjust = 1, vjust = -0.5)
+      }
+      
+      if (show_high) {
+      gg <- gg +
+        geom_vline(xintercept = out$higher, colour = "red", linetype = "dashed") +
+        annotate("text", x = out$higher, y = 0,
+                 label = paste0(out$n, "MADs"), colour = "red",
+                 angle = 90, hjust = -0.1, vjust = -0.5) +
+        annotate("text", x = out$higher, y = Inf,
+                 label = paste0(round(out$higher, 3),
+                                " (", out$n_high, " higher)"),
+                 colour = "red", angle = 90, hjust = 1, vjust = -0.5)
+    }
+  }
+    
+    return(gg)
+  }
+
+outlierHistogram(metadata, "pct_mt", mads = 3:4)
+
+```
+
+
+#4MADs pct_mt
+```{r}
+hto12_pre <- subset(hto12, pct_mt < 9.753)
+#hto12_pre <- subset(seurat_hto12, subset = nFeature_RNA > 10^2.441208 & nCount_RNA > 10^2.463345 & pct_mt < 9.753)
+table(hto12_pre$HTO_classification.global)
+```
+
+
+
+```{r}
+hto12_pre_neg<- subset(hto12_pre, idents = "Negative", invert = TRUE);hto12_pre_neg
+table(hto12_pre_neg$HTO_classification.global)
+```
+#########################################################################################
+```{r}
+table(test$class)
+```
+
+```{r}
+test@meta.data$class <- factor(test@meta.data$class, levels = c("singlet","doublet"))
+doublet_vis_do <- ggplot(test@meta.data %>%
+         arrange(class), aes(x = nCount_RNA,y=nFeature_RNA,colour=class)) +
+  geom_point(size=1) +
+  scale_colour_manual(values = c("grey","#4E79A7")) +
+  xlab("Count depth (total UMI count)") +
+  ylab("Nr of Genes") +
+  theme(
+    legend.position = "bottom",
+    legend.justification='left',
+    legend.text = element_text(size = 14),
+    legend.direction = 'vertical',
+    legend.title=element_blank(),
+    axis.title.x = element_text(size=14),
+    axis.title.y = element_text(size=14),
+    axis.text.x = element_text(size=14),
+    axis.text.y = element_text(size=14)
+    ) +
+    guides(colour = guide_legend(override.aes = list(size=4)))+
+  geom_rug(col=rgb(0,0,0.5,alpha=.1))+ 
+  order()
+  theme_bw()
+
+doublet_vis_do
+```
+
+
+```{r}
+hto12_pre@meta.data$HTO_classification.global <- factor(hto12_pre@meta.data$HTO_classification.global, levels = c("Singlet","Doublet","Negative"))
+doublet_vis_do <- ggplot(hto12@meta.data %>%
+         arrange(HTO_classification.global), aes(x = nCount_RNA,y=nFeature_RNA,colour=HTO_classification.global)) +
+  geom_point(size=1) +
+  scale_colour_manual(values = c("grey","#4E79A7","#F28E2B")) +
+  xlab("Count depth (total UMI count)") +
+  ylab("Nr of Genes") +
+  theme(
+    legend.position = "bottom",
+    legend.justification='left',
+    legend.text = element_text(size = 14),
+    legend.direction = 'vertical',
+    legend.title=element_blank(),
+    axis.title.x = element_text(size=14),
+    axis.title.y = element_text(size=14),
+    axis.text.x = element_text(size=14),
+    axis.text.y = element_text(size=14)
+    ) +
+    guides(colour = guide_legend(override.aes = list(size=4)))+
+  geom_rug(col=rgb(0,0,0.5,alpha=.1))+ 
+  order()
+  theme_bw()
+
+doublet_vis_do
+```
+
+
+```{r}
+summary(names(test$class[test$class=="doublet"]) %in% names(hto12_pre$HTO_classification.global[hto12_pre$HTO_classification.global=="Doublet"]))
+```
+
+#add the other 2 datasets HTO and all datasets as same as the paper and below Rmd name:
+#continue as same as Demux_method.Rmd
+```{r}
+
+```
+
+
+
+
+
+
+
+#CiteFuse method:
+```{r}
+sce_cite <- preprocessing(list(RNA = pbmc.umis,
+                                  HTO = pbmc.hto))
+```
+
+
+
+```{r}
+head(sce_cite@int_colData$altExps@listData$HTO@se@colData@rownames)
+```
+
+```{r}
+length(sce_cite@int_colData$altExps@listData$HTO@se@colData@rownames)
+```
+
+```{r}
+sce_cite
+```
+
+```{r}
+sce_cite@int_colData$altExps@listData$HTO@se@NAMES
+```
+# Detecting both cross- and within-sample doublets using CiteFuse
+
+```{r}
+#HTO Normalisation and Visualisation
+sce_cite <- normaliseExprs(sce = sce_cite,
+                              altExp_name = "HTO",
+                              transform = "log")
+```
+
+
+```{r}
+sce_cite <- scater::runTSNE(sce_cite,
+                               altexp = "HTO",
+                               name = "TSNE_HTO",
+                               pca = TRUE)
+
+```
+
+
+```{r}
+visualiseDim(sce_cite,
+             dimNames = "TSNE_HTO") + labs(title = "tSNE (HTO)")
+```
+
+
+```{r}
+sce_cite <- scater::runUMAP(sce_cite,
+                               altexp = "HTO",
+                            name = "UMAP_HTO")
+```
+
+```{r}
+visualiseDim(sce_cite,
+             dimNames = "UMAP_HTO") + labs(title = "UMAP (HTO)")
+```
+
+
+```{r}
+sce_cite <- crossSampleDoublets(sce_cite)
+```
+
+
+```{r}
+table(sce_cite$doubletClassify_between_label)
+```
+
+
+```{r}
+table(sce_cite$doubletClassify_between_class)
+```
+
+
+```{r}
+visualiseDim(sce_cite,
+             dimNames = "TSNE_HTO",
+             colour_by = "doubletClassify_between_label")
+```
+
+
+```{r}
+plotHTO(sce_cite, 1:4)
+```
+# Doublet identification step 1: within-sample doublet detection
+
+
+```{r}
+sce_cite <- withinSampleDoublets(sce_cite,
+                                    minPts = 10)
+```
+
+
+```{r}
+table(sce_cite$doubletClassify_within_label)
+```
+
+
+```{r}
+table(sce_cite$doubletClassify_within_class)
+```
+
+```{r}
+visualiseDim(sce_cite,
+             dimNames = "TSNE_HTO",
+             colour_by = "doubletClassify_within_label")
+```
+
+
+```{r}
+#sce_cite <- sce_cite[, sce_cite$doubletClassify_within_class == "Singlet" & sce_cite$doubletClassify_between_class == "Singlet"]
+#sce_cite
+```
+
+```{r}
+setwd("/home/faezeh/Documents/")
+saveRDS(sce_cite,"CiteFuse_method_hto_filt/data.citefusemethod.8HTO.rds")
+```
+
+
+#visualize ngene vs numi plot to show negative, btw and within doublets and singlet (i didnt apply any prefiltering)
+```{r}
+#sce_cite$kept <- "Singlet"
+#do it later
+
+```
+
+
+
+# test my filtering methods and compare it with HTO filtering method as a ground truth method
+
+```{r}
+seuratobj_umi
+```
+
+
+```{r}
+library("SingleCellExperiment")
+library("scater")
+library("scran")
+library("DoubletFinder")
+
+# RNA-seq
+library("edgeR")
+
+# Plotting
+library("cowplot")
+library("gridExtra")
+library("mixtools")
+
+# Tidyverse
+library("tidyverse")
+```
+
+```{r}
+table(Idents(seuratobj_umi))
+```
+
+```{r}
+mouse_genes <- rownames(seuratobj_umi)[unlist(lapply(rownames(seuratobj_umi), function(x) grepl("^MOUSE", x)))]
+mouse_genes
+```
+
+
+```{r}
+rownames(seuratobj_umi)[unlist(lapply(rownames(seuratobj_umi), function(x) grepl("^MT-", x)))]
+```
+
+```{r}
+rownames(seuratobj_umi)[unlist(lapply(rownames(seuratobj_umi), function(x) grepl("^hg19_MT-", x)))]
+```
+
+
+```{r}
+rowSums(seuratobj_umi@assays$RNA@counts[rownames(seuratobj_umi@assays$RNA@counts) %in% mouse_genes,])
+```
+
+
+```{r}
+seuratobj_umi$log10nUMI <- log10(seuratobj_umi$nCount_RNA)
+seuratobj_umi$log10nGene <- log10(seuratobj_umi$nFeature_RNA)
+seuratobj_umi$mitoRatio <- PercentageFeatureSet(object = seuratobj_umi, pattern = "^MT-")
+seuratobj_umi$mitoRatio <- seuratobj_umi@meta.data$mitoRatio / 100
+seuratobj_umi$pct_mt <- seuratobj_umi@meta.data$mitoRatio * 100
+metadata <- seuratobj_umi@meta.data
+```
+
+```{r}
+# Rename columns
+metadata <- metadata %>%
+  dplyr::rename(seq_folder = orig.ident,
+                nUMI = nCount_RNA,
+                nGene = nFeature_RNA)
+
+# Add metadata back to Seurat object
+seuratobj_umi@meta.data <- metadata
+head(seuratobj_umi@meta.data)
+```
+
+```{r}
+head(as.data.frame(metadata))
+```
+
+```{r}
+metadata$info <- sce_cite$doubletClassify_between_class
+metadata$inf_do <- sce_cite$doubletClassify_within_class
+```
+
+
+```{r}
+metadata$info[metadata$inf_do=="Doublet"] <- "Doublet"
+```
+
+```{r}
+metadata[metadata$inf_do=="Doublet",]
+```
+
+```{r}
+table(metadata$info)
+```
+
+```{r}
+library(plyr)
+metadata$info <- factor(metadata$info, levels = c("Singlet","doublet/multiplet", "Doublet", "negative"))
+doublet_vis <- ggplot(metadata %>%
+         arrange(info), aes(x = nUMI,y=nGene,colour=info)) +
+  geom_point(size=1) +
+  scale_colour_manual(values = c("grey","#4E79A7","#F28E2B","#59A14F")) +
+  xlab("Count depth (total UMI count)") +
+  ylab("Nr of Genes") +
+  theme(
+    legend.position = "bottom",
+    legend.justification='left',
+    legend.text = element_text(size = 14),
+    legend.direction = 'vertical',
+    legend.title=element_blank(),
+    axis.title.x = element_text(size=14),
+    axis.title.y = element_text(size=14),
+    axis.text.x = element_text(size=14),
+    axis.text.y = element_text(size=14)
+    ) +
+    guides(colour = guide_legend(override.aes = list(size=4)))+
+  geom_rug(col=rgb(0,0,0.5,alpha=.1))+ 
+  order()
+  theme_bw()
+
+doublet_vis
+```
+```{r}
+
+library(gridExtra)
+res.dir <- paste0("/home/faezeh/Documents/CiteFuse_method_hto_filt/")
+dir.create(res.dir) 
+res.dir
+ggsave(doublet_vis, file=paste0(res.dir,"CitFuse_method_10x_8HTOdata.pdf"), width = 18, height=10)
+ 
+```
+
+```{r}
+library(plyr)
+metadata$inf_do <- factor(metadata$inf_do, levels = c("Singlet","Doublet"))
+doublet_vis_do <- ggplot(metadata %>%
+         arrange(inf_do), aes(x = nUMI,y=nGene,colour=inf_do)) +
+  geom_point(size=1) +
+  scale_colour_manual(values = c("grey","#4E79A7")) +
+  xlab("Count depth (total UMI count)") +
+  ylab("Nr of Genes") +
+  theme(
+    legend.position = "bottom",
+    legend.justification='left',
+    legend.text = element_text(size = 14),
+    legend.direction = 'vertical',
+    legend.title=element_blank(),
+    axis.title.x = element_text(size=14),
+    axis.title.y = element_text(size=14),
+    axis.text.x = element_text(size=14),
+    axis.text.y = element_text(size=14)
+    ) +
+    guides(colour = guide_legend(override.aes = list(size=4)))+
+  geom_rug(col=rgb(0,0,0.5,alpha=.1))+ 
+  order()
+  theme_bw()
+
+doublet_vis_do
+```
+
+```{r}
+head(metadata$inf_do)
+```
+
+```{r}
+head(metadata$info)
+```
+
+
+```{r}
+outlierHistogram <- function(data, x, mads = 1:3, bins = 100,
+                             show_zero = FALSE) {
+  x_data <- data[, x]
+  med    <- median(x_data)
+  MAD    <- mad(x_data, center = med, na.rm = TRUE)
+  
+  outs <- lapply(mads, function(n) {
+    lower  <- med - n * MAD
+    higher <- med + n * MAD
+    n_low  <- sum(x_data < lower)
+    n_high <- sum(x_data > higher)
+
+    list(n = n, lower = lower, higher = higher,
+         n_low = n_low, n_high = n_high)
+    
+  })
+    gg <- ggplot(data, aes(x = !!ensym(x))) +
+      geom_histogram(bins = 100, color = "black", fill = "gray"
+                     )+ #aes(y=..density.., fill=..count..) inside of geom_histogram
+      geom_vline(xintercept = med, colour = "blue", linetype = "dashed") +
+      annotate("text", x = med, y = 0, label = "Median", colour = "blue",
+               angle = 90, hjust = -0.1, vjust = -0.5) +
+      annotate("text", x = med, y = Inf, label = round(med, 3), colour = "blue",
+               angle = 90, hjust = 1, vjust = -0.5) +
+      theme_minimal() +
+      ylab("frequency")+
+      theme(legend.position = "none")+
+      ggtitle("")
+      # stat_function(fun=dnorm, color="red", args=list(mean=mean(x_data),
+      #                                                     sd=sd(x_data)))
+      
+      
+    cols <- scales::brewer_pal(palette = "Reds",
+                               direction = -1)(length(mads) + 1)
+    
+    for (i in seq_along(outs)) {
+      out <- outs[[i]]
+      
+      if (show_zero) {
+        show_low  <- TRUE
+        show_high <- TRUE
+      } else {
+        show_low  <- out$n_low > 0
+        show_high <- out$n_high > 0
+      }
+      
+      if (show_low) {
+        gg <- gg +
+          geom_vline(xintercept = out$lower, colour = cols[i], linetype = "dashed") +
+          annotate("text", x = out$lower, y = 0,
+                   label = paste0(out$n, " MADs"), colour = cols[i],
+                   angle = 90, hjust = -0.1, vjust = -0.5) +
+          annotate("text", x = out$lower, y = Inf,
+                   label = paste0(round(out$lower, 3),
+                                  " (", out$n_low, " lower)"),
+                   colour = cols[i], angle = 90, hjust = 1, vjust = -0.5)
+      }
+      
+      if (show_high) {
+      gg <- gg +
+        geom_vline(xintercept = out$higher, colour = "red", linetype = "dashed") +
+        annotate("text", x = out$higher, y = 0,
+                 label = paste0(out$n, "MADs"), colour = "red",
+                 angle = 90, hjust = -0.1, vjust = -0.5) +
+        annotate("text", x = out$higher, y = Inf,
+                 label = paste0(round(out$higher, 3),
+                                " (", out$n_high, " higher)"),
+                 colour = "red", angle = 90, hjust = 1, vjust = -0.5)
+    }
+  }
+    
+    return(gg)
+  }
+  
+#setwd("/home/faezeh/Documents/")
+#pdf(file='CiteFuse_method_hto_filt/umiMADsfilt_outliers_12hto_10xdataset.pdf', width = 15, height = 10)
+outlierHistogram(metadata, "log10nUMI", mads = 1:4)
+# p <- plot(fitd)
+#dev.off()
+```
+
+
+```{r}
+library(mixtools)
+outlier_Histogram <- function(data, x, sigmas = 1:3, bins = 100,
+                             show_zero = FALSE) {
+  x_data <- data[, x]
+  
+  #mixmdl = normalmixEM(x_data, k=2,maxit=10000,epsilon=1e-08, maxrestarts = 1000)
+  #mu <- mixmdl$mu[1]
+  #sigma <- mixmdl$sigma[1]
+  mu <- mean(x_data)
+  sigma <- sd(x_data)
+  
+  outs <- lapply(sigmas, function(n) {
+    lower  <- mu - n * sigma
+    higher <- mu + n * sigma
+    n_low  <- sum(x_data < lower)
+    n_high <- sum(x_data > higher)
+    
+    list(n = n, lower = lower, higher = higher,
+         n_low = n_low, n_high = n_high)
+  })
+  sdnorm =
+    function(x, mean=0, sd=1, lambda=1){lambda*dnorm(x, mean=mean, sd=sd)}
+  
+  gg <- ggplot(data, aes(x = !!ensym(x))) +
+    geom_histogram(bins = 100, color = "black", fill = "gray",  
+                   aes(y=..density.., fill=..count..)) +
+    geom_vline(xintercept = mu, colour = "blue", linetype = "dashed") +
+    annotate("text", x = mu, y = 0, label = "Mean", colour = "blue",
+             angle = 90, hjust = -0.1, vjust = -0.5) +
+    annotate("text", x = mu, y = Inf, label = round(mu, 3), colour = "blue",
+             angle = 90, hjust = 1, vjust = -0.5)+
+    #stat_function(fun=sdnorm,args=list(mean=mixmdl$mu[1],sd=mixmdl$sigma[1], lambda=mixmdl$lambda[1]), color ="black")+
+    #stat_function(fun=sdnorm,args=list(mean=mixmdl$mu[2],sd=mixmdl$sigma[2], lambda=mixmdl$lambda[2]),color =  "black")+
+    theme_minimal() +
+    ylab("density")+
+    theme(legend.position = "none")+
+    ggtitle("")
+  
+  
+  for (i in seq_along(outs)) {
+    out <- outs[[i]]
+    
+    if (show_zero) {
+      show_low  <- TRUE
+      show_high <- TRUE
+    } else {
+      show_low  <- out$n_low > 0
+      show_high <- out$n_high > 0
+    }
+    
+    if (show_low) {
+      gg <- gg +
+        geom_vline(xintercept = out$lower, colour = "red", linetype = "dashed") +
+        annotate("text", x = out$lower, y = 0,
+                 label = paste0(out$n, " SD"), colour = "red",
+                 angle = 90, hjust = -0.1, vjust = -0.5) +
+        annotate("text", x = out$lower, y = Inf,
+                 label = paste0(round(out$lower, 3),
+                                " (", out$n_low, " lower)"),
+                 colour = "red", angle = 90, hjust = 1, vjust = -0.5)
+    }
+    
+    
+    if (show_high) {
+      gg <- gg +
+        geom_vline(xintercept = out$higher, colour = "red", linetype = "dashed") +
+        annotate("text", x = out$higher, y = 0,
+                 label = paste0(out$n, "SD"), colour = "red",
+                 angle = 90, hjust = -0.1, vjust = -0.5) +
+        annotate("text", x = out$higher, y = Inf,
+                 label = paste0(round(out$higher, 3),
+                                " (", out$n_high, " higher)"),
+                 colour = "red", angle = 90, hjust = 1, vjust = -0.5)
+    }
+  }
+  
+  
+  return(gg)
+}
+#setwd("/home/faezeh/Documents/")
+#pdf(file='CiteFuse_method_hto_filt/umifilt_outliers_12hto_10xdataset.pdf', width = 15, height = 10)
+outlier_Histogram(metadata, "log10nGene", sigmas = c(2,2.5, 3, 4))
+#dev.off()
+```
+******** we do this way of filtering because data is normally distributed(one histogram not mixture):
+```{r}
+statt <- summary(metadata$log10nUMI)
+st_dev <- sd(metadata$log10nUMI)
+lower_umi <- 2.757-(2.5*0.2125422)
+upper_umi <- 2.757+(2.5*0.2125422)
+statt
+```
+
+```{r}
+st_dev
+```
+
+```{r}
+lower_umi
+```
+
+
+```{r}
+upper_umi
+```
+```{r}
+statt <- summary(metadata$log10nGene)
+st_dev <- sd(metadata$log10nGene)
+lower_gene <- 2.528-(2.5*0.1609958)
+upper_gene <- 2.528+(2.5*0.1609958)
+statt
+```
+
+```{r}
+st_dev
+```
+
+```{r}
+lower_gene
+```
+
+
+```{r}
+upper_gene
+```
+
+# prefiltering with SD: pct_mt based on mads
+```{r}
+#***mostly high pct_mt cells : low quality cells
+selected <- WhichCells(seuratobj_umi, expression = pct_mt < 5.447) #nmads=4
+
+seuratobj_umi.filtmito <- subset(seuratobj_umi, cells = selected)
+table(Idents(seuratobj_umi.filtmito))
+
+low.selected <- WhichCells(seuratobj_umi.filtmito, expression = nGene <  10^2.1255)
+#because there is no 2.5 SD, I applied a smaller values between 2.5 and 2 SD that I can make a vector (only few cells):
+low.selected_ <- WhichCells(seuratobj_umi.filtmito, expression = nUMI <  10^2.30329)
+
+data.filt_pre <- subset(seuratobj_umi.filtmito, cells=setdiff(WhichCells(seuratobj_umi.filtmito),c(low.selected,
+                                                                          low.selected_)))
+table(Idents(data.filt_pre))
+```
+
+```{r}
+setwd("/home/faezeh/Documents/")
+saveRDS(data.filt_pre,"CiteFuse_method_hto_filt/data.filt.PRE.8HTO.rds")
+```
+
+# upper threshold
+```{r}
+high.selected <- WhichCells(seuratobj_umi, expression = nGene > 10^2.9305)
+high.selected_ <- WhichCells(seuratobj_umi, expression = nUMI > 10^3.2883)
+data.filt <- subset(seuratobj_umi, cells=setdiff(WhichCells(seuratobj_umi),c(high.selected,high.selected_)))
+table(Idents(data.filt))
+```
+
+#lower plus upper threshold
+
+```{r}
+high.selected <- WhichCells(seuratobj_umi.filtmito, expression = nGene > 10^2.9305)
+high.selected_ <- WhichCells(seuratobj_umi.filtmito, expression = nUMI > 10^3.2883)
+data.filt.up.low <- subset(seuratobj_umi.filtmito, cells=setdiff(WhichCells(seuratobj_umi.filtmito),c(high.selected,high.selected_,low.selected,
+                                                                          low.selected_)))
+table(Idents(data.filt.up.low))
+```
+```{r}
+setwd("/home/faezeh/Documents/")
+saveRDS(data.filt.up.low,"CiteFuse_method_hto_filt/data.filt.lowplusup.8HTO.rds")
+```
+
+#apply doublet finder in this data and visualize numi vs ngene plot:first visulize sd outliers detection:
+```{r}
+seuratobj_m <- seuratobj_umi
+seuratobj_m$kept <- "Singlet"
+
+`%!in%` <- Negate(`%in%`)
+
+for(i in rownames(seuratobj_m@meta.data)){
+  if (i %!in% colnames(x = data.filt_pre)){
+    seuratobj_m$kept[[i]] = "low quality cells(prefiltered)"
+  }
+  else {
+    next
+  }
+    
+}
+
+
+
+
+for(i in rownames(seuratobj_m@meta.data)){
+  if (i %!in% colnames(x = data.filt)){
+    seuratobj_m$kept[[i]] = "upper outliers"
+  }
+  else {
+    next
+  }
+    
+}
+
+
+
+```
+
+```{r}
+seuratobj_m <- NormalizeData(seuratobj_m)
+seuratobj_m <- ScaleData(seuratobj_m)
+seuratobj_m <- FindVariableFeatures(seuratobj_m, selection.method = "vst", nfeatures = 2000)
+seuratobj_m <- RunPCA(seuratobj_m)
+seuratobj_m <- RunUMAP(seuratobj_m, dims = 1:15)
+```
+
+```{r}
+seuratobj_m <- FindNeighbors(seuratobj_m, dims = 1:15)
+seuratobj_m <- FindClusters(seuratobj_m, resolution = c(0.4,0.5,0.6,0.8,1.2))
+#seuratobj_m <- RunTSNE(seuratobj_m, dims = 1:15)
+```
+
+```{r}
+#visualize data
+seuratobj_m$kept <- factor(seuratobj_m$kept, levels = c("Singlet", "low quality cells(prefiltered)","upper outliers"))
+
+b <- DimPlot(seuratobj_m,pt.size = 3.5,reduction = "tsne",group.by = "kept", cols= c("Singlet" = "grey", 
+                                                                                  "low quality cells(prefiltered)" = "#4E79A7", "upper outliers" = "#E15759"),
+             order = c("upper outliers", "low quality cells(prefiltered)","Singlet"))+
+  theme(
+    legend.position = "bottom",
+    legend.text = element_text(size = 18),
+    legend.direction = 'vertical',
+    ) +
+    labs(x="", y="") +
+    guides(colour = guide_legend(override.aes = list(size=6)))
+  
+b
+
+```
+
+
+```{r}
+seuratobj_m$kept <- factor(seuratobj_m$kept, levels = c("Singlet","low quality cells(prefiltered)","upper outliers"))
+metadataSD <- seuratobj_m@meta.data
+metadataSD %>% 
+  ggplot(aes(x=nUMI, y=nGene, color=kept)) + 
+  geom_point() + 
+  stat_smooth(method=lm) +
+  scale_x_log10() + 
+  scale_y_log10() + 
+  theme_classic() 
+```
+
+```{r}
+library(plyr)
+metadataSD$kept <- factor(metadataSD$kept, levels = c("Singlet","upper outliers","low quality cells(prefiltered)"))
+
+a1 <- ggplot(metadataSD %>%
+         arrange(kept), aes(x = nUMI,y=nGene,colour=kept)) +
+  geom_point(size=1) +
+  scale_colour_manual(values = c("grey","#F28E2B","#59A14F")) +
+  xlab("Count depth (total UMI count)") +
+  ylab("Nr of Genes") +
+  theme(
+    legend.position = "bottom",
+    legend.justification='left',
+    legend.text = element_text(size = 14),
+    legend.direction = 'vertical',
+    legend.title=element_blank(),
+    axis.title.x = element_text(size=14),
+    axis.title.y = element_text(size=14),
+    axis.text.x = element_text(size=14),
+    axis.text.y = element_text(size=14)
+    ) +
+    guides(colour = guide_legend(override.aes = list(size=4)))+
+  geom_rug(col=rgb(0,0,0.5,alpha=.1))+ 
+  order()
+  theme_bw()
+
+a1
+
+```
+```{r}
+
+library(gridExtra)
+res.dir <- paste0("/home/faezeh/Documents/CiteFuse_method_hto_filt/")
+dir.create(res.dir) 
+res.dir
+ggsave(a1, file=paste0(res.dir,"mymethod_uppluslowfilt_10x_8HTOdata.pdf"), width = 18, height=10)
+ 
+```
+
+#Doubletfinder: apply on pre filtered data
+
+```{r}
+setwd("/home/faezeh/Documents/")
+#data.filt.df <- data.filt_pre
+data.filt.df <- readRDS("CiteFuse_method_hto_filt/data.filt.PRE.8HTO.rds")
+data.filt.df <- NormalizeData(data.filt.df)
+data.filt.df <- ScaleData(data.filt.df)
+data.filt.df <- FindVariableFeatures(data.filt.df, selection.method = "vst", nfeatures = 2000)
+data.filt.df <- RunPCA(data.filt.df)
+data.filt.df <- RunUMAP(data.filt.df, dims = 1:15)
+data.filt.df <- FindNeighbors(data.filt.df, dims = 1:15)
+data.filt.df <- FindClusters(data.filt.df, resolution = c(0.4,0.5,0.6,0.8,1.2))
+
+saveRDS(data.filt.df, "CiteFuse_method_hto_filt/data.filt.DF.8HTO.rds")
+```
+
+```{r}
+setwd("/home/faezeh/Documents/")
+data.filt.df <- readRDS("CiteFuse_method_hto_filt/data.filt.DF.8HTO.rds")
+```
+
+```{r}
+sweep.res.list_ <- paramSweep_v3(data.filt.df, PCs = 1:15, sct = FALSE)
+sweep.stats_ <- summarizeSweep(sweep.res.list_, GT = FALSE)
+bcmvn_ <- find.pK(sweep.stats_)
+```
+
+```{r}
+
+```
+
+
+```{r}
+#based on 10x genomics chromium single cell v3 user guide multiplet rate or doublet formation rate can be determined based on number of cells. Assuming 7.6% doublet formation rate:0.076
+
+#pk is 0.01 based on bcmvn_
+#nExp_poi = 1273
+#nExp_poi.adj = 1170
+```
+
+
+
+
+#find common Singlets between methods
+```{r}
+setwd("/home/faezeh/Documents/")
+
+x_singlet_cells <- readRDS("CiteFuse_method_hto_filt/x_singlet_cells.rds")
+x_filt_all_cells <- readRDS("CiteFuse_method_hto_filt/x_filt_all_cells.rds")
+```
+
+
+```{r}
+sce_cite_filt <- sce_cite[, sce_cite$doubletClassify_within_class == "Singlet" & sce_cite$doubletClassify_between_class == "Singlet"] 
+
+sce_cite_filt
+```
+```{r}
+x_singlet_citemethod_cells <- colnames(sce_cite_filt)
+```
+#find common singlets in 3 vectors
+```{r}
+table(x_singlet_cells %in% x_singlet_citemethod_cells)
+```
+```{r}
+table(x_filt_all_cells %in% x_singlet_citemethod_cells)
+```
+#check hto SingleCellExperiment object:
+```{r}
+patterns <- c("^hg19-MT-", "^mm10-mt-","^MT-", "^mt-")
+sce_cite_hto12<-addPerCellQC(sce_cite_hto12, subsets=list(Mito=grepl(paste(patterns, collapse="|"), rownames(sce_cite_hto12))))
+sce_cite_hto12$log10nUMI <- log10(sce_cite_hto12$sum)
+sce_cite_hto12$log10nGene <- log10(sce_cite_hto12$detected)
+metadata <- sce_cite_hto12@colData
+metadata <- as.data.frame(metadata)
+```
+
