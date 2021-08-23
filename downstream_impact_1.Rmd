@@ -1,0 +1,356 @@
+---
+title: "downstream_impact_1"
+output: html_document
+---
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = '~/01_data/Faezeh/downstream_impact/')
+```
+
+```{r}
+library(Seurat)
+library(dplyr)
+library(tidyverse)
+library(SingleCellExperiment)
+library(dplyr)
+library(cowplot)
+library(BiocSingular)
+library(scater)
+```
+
+```{r}
+## Schirmer 2019
+#paper: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC6731122/
+```
+
+```{r}
+de_data <- Read10X("DE_data_lucas/")
+```
+
+```{r}
+# Load associated metadata file
+metadata_schirmer <- read.table("DE_data_lucas/meta.txt", sep="\t", header=TRUE)
+
+# Set rownames of metadata to cell barcode
+rownames(metadata_schirmer) <- metadata_schirmer$cell
+```
+
+```{r}
+de_data_obj <- CreateSeuratObject(de_data, meta.data = metadata_schirmer, min.cells = 1);de_data_obj
+```
+
+
+```{r}
+de_data_obj$log10nUMI <- log10(de_data_obj$nCount_RNA)
+de_data_obj$log10nGene <- log10(de_data_obj$nFeature_RNA)
+de_data_obj$mitoRatio <- PercentageFeatureSet(object = de_data_obj, pattern = "^MT-")
+de_data_obj$mitoRatio <- de_data_obj@meta.data$mitoRatio / 100
+de_data_obj$pct_mt <- de_data_obj@meta.data$mitoRatio * 100
+
+metadata <- de_data_obj@meta.data
+
+Idents(de_data_obj) <- "diagnosis"
+```
+
+```{r}
+library(mixtools)
+outlier_Histogram <- function(data, x, sigmas = 1:3, bins = 100,
+                             show_zero = FALSE) {
+  x_data <- data[, x]
+  
+  mixmdl = normalmixEM(x_data, k=2,maxit=10000,epsilon=1e-08, maxrestarts = 1000)
+  mu <- mixmdl$mu[2]
+  sigma <- mixmdl$sigma[2]
+  # mu <- mean(x_data)
+  # sigma <- sd(x_data)
+  
+  outs <- lapply(sigmas, function(n) {
+    lower  <- mu - n * sigma
+    higher <- mu + n * sigma
+    n_low  <- sum(x_data < lower)
+    n_high <- sum(x_data > higher)
+    
+    list(n = n, lower = lower, higher = higher,
+         n_low = n_low, n_high = n_high)
+  })
+  sdnorm =
+    function(x, mean=0, sd=1, lambda=1){lambda*dnorm(x, mean=mean, sd=sd)}
+  
+  gg <- ggplot(data, aes(x = !!ensym(x))) +
+    geom_histogram(bins = 100, color = "black", fill = "gray",  
+                   aes(y=..density.., fill=..count..)) +
+    geom_vline(xintercept = mu, colour = "blue", linetype = "dashed") +
+    annotate("text", x = mu, y = 0, label = "Mean", colour = "blue",
+             angle = 90, hjust = -0.1, vjust = -0.5) +
+    annotate("text", x = mu, y = Inf, label = round(mu, 3), colour = "blue",
+             angle = 90, hjust = 1, vjust = -0.5)+
+    stat_function(fun=sdnorm,args=list(mean=mixmdl$mu[1],sd=mixmdl$sigma[1], lambda=mixmdl$lambda[1]), color ="black")+
+    stat_function(fun=sdnorm,args=list(mean=mixmdl$mu[2],sd=mixmdl$sigma[2], lambda=mixmdl$lambda[2]),color =  "black")+
+    theme_minimal() +
+    ylab("density")+
+    theme(legend.position = "none")+
+    ggtitle("")
+  
+  
+  for (i in seq_along(outs)) {
+    out <- outs[[i]]
+    
+    if (show_zero) {
+      show_low  <- TRUE
+      show_high <- TRUE
+    } else {
+      show_low  <- out$n_low > 0
+      show_high <- out$n_high > 0
+    }
+    
+    if (show_low) {
+      gg <- gg +
+        geom_vline(xintercept = out$lower, colour = "red", linetype = "dashed") +
+        annotate("text", x = out$lower, y = 0,
+                 label = paste0(out$n, " SD"), colour = "red",
+                 angle = 90, hjust = -0.1, vjust = -0.5) +
+        annotate("text", x = out$lower, y = Inf,
+                 label = paste0(round(out$lower, 3),
+                                " (", out$n_low, " lower)"),
+                 colour = "red", angle = 90, hjust = 1, vjust = -0.5)
+    }
+    
+    
+    if (show_high) {
+      gg <- gg +
+        geom_vline(xintercept = out$higher, colour = "red", linetype = "dashed") +
+        annotate("text", x = out$higher, y = 0,
+                 label = paste0(out$n, "SD"), colour = "red",
+                 angle = 90, hjust = -0.1, vjust = -0.5) +
+        annotate("text", x = out$higher, y = Inf,
+                 label = paste0(round(out$higher, 3),
+                                " (", out$n_high, " higher)"),
+                 colour = "red", angle = 90, hjust = 1, vjust = -0.5)
+    }
+  }
+  
+  
+  return(gg)
+}
+
+#pdf(file='CiteFuse_method_hto_filt/umifilt_outliers_12hto_10xdataset.pdf', width = 15, height = 10)
+outlier_Histogram(metadata, "log10nUMI", sigmas = c(2,2.5, 3, 4))
+#dev.off()
+```
+
+```{r}
+outlierHistogram <- function(data, x, mads = 1:3, bins = 100,
+                             show_zero = FALSE) {
+  x_data <- data[, x]
+  med    <- median(x_data)
+  MAD    <- mad(x_data, center = med, na.rm = TRUE)
+  
+  outs <- lapply(mads, function(n) {
+    lower  <- med - n * MAD
+    higher <- med + n * MAD
+    n_low  <- sum(x_data < lower)
+    n_high <- sum(x_data > higher)
+
+    list(n = n, lower = lower, higher = higher,
+         n_low = n_low, n_high = n_high)
+    
+  })
+    gg <- ggplot(data, aes(x = !!ensym(x))) +
+      geom_histogram(bins = 100, color = "black", fill = "gray"
+                     )+ #aes(y=..density.., fill=..count..) inside of geom_histogram
+      geom_vline(xintercept = med, colour = "blue", linetype = "dashed") +
+      annotate("text", x = med, y = 0, label = "Median", colour = "blue",
+               angle = 90, hjust = -0.1, vjust = -0.5) +
+      annotate("text", x = med, y = Inf, label = round(med, 3), colour = "blue",
+               angle = 90, hjust = 1, vjust = -0.5) +
+      theme_minimal() +
+      ylab("frequency")+
+      theme(legend.position = "none")+
+      ggtitle("")
+      # stat_function(fun=dnorm, color="red", args=list(mean=mean(x_data),
+      #                                                     sd=sd(x_data)))
+      
+      
+    cols <- scales::brewer_pal(palette = "Reds",
+                               direction = -1)(length(mads) + 1)
+    
+    for (i in seq_along(outs)) {
+      out <- outs[[i]]
+      
+      if (show_zero) {
+        show_low  <- TRUE
+        show_high <- TRUE
+      } else {
+        show_low  <- out$n_low > 0
+        show_high <- out$n_high > 0
+      }
+      
+      if (show_low) {
+        gg <- gg +
+          geom_vline(xintercept = out$lower, colour = cols[i], linetype = "dashed") +
+          annotate("text", x = out$lower, y = 0,
+                   label = paste0(out$n, " MADs"), colour = cols[i],
+                   angle = 90, hjust = -0.1, vjust = -0.5) +
+          annotate("text", x = out$lower, y = Inf,
+                   label = paste0(round(out$lower, 3),
+                                  " (", out$n_low, " lower)"),
+                   colour = cols[i], angle = 90, hjust = 1, vjust = -0.5)
+      }
+      
+      if (show_high) {
+      gg <- gg +
+        geom_vline(xintercept = out$higher, colour = "red", linetype = "dashed") +
+        annotate("text", x = out$higher, y = 0,
+                 label = paste0(out$n, "MADs"), colour = "red",
+                 angle = 90, hjust = -0.1, vjust = -0.5) +
+        annotate("text", x = out$higher, y = Inf,
+                 label = paste0(round(out$higher, 3),
+                                " (", out$n_high, " higher)"),
+                 colour = "red", angle = 90, hjust = 1, vjust = -0.5)
+    }
+  }
+    
+    return(gg)
+  }
+
+outlierHistogram(metadata, "pct_mt", mads = 4)
+
+```
+#QC filtering (joint filtering)
+```{r}
+#filt <- subset(x = de_data_obj, subset= (nCount_RNA > 10^2.898) & (nFeature_RNA > 10^2.743) & (pct_mt < 3.194))
+selected_cellranger <- WhichCells(de_data_obj, expression = pct_mt < 3.194)
+merge.methods.filtmito <- subset(de_data_obj, cells = selected_cellranger)
+low.selected_cellranger <- WhichCells(merge.methods.filtmito, expression = nFeature_RNA < 10^2.743)
+low.selected_cellranger_ <- WhichCells(merge.methods.filtmito, expression = nCount_RNA < 10^2.898)
+data.filt_pre <- subset(merge.methods.filtmito, cells=setdiff(WhichCells(merge.methods.filtmito),c(low.selected_cellranger,
+                                                                          low.selected_cellranger_)))
+table(Idents(data.filt_pre))
+```
+#doublets
+```{r}
+library(scDblFinder)
+sce <- Seurat::as.SingleCellExperiment(data.filt_pre)
+sce <- scDblFinder(sce)
+table(sce$scDblFinder.class)
+sce_singlet <- sce[,sce$scDblFinder.class == "singlet"]
+sce_singlet <- as.Seurat(sce_singlet, counts = "counts", data = "logcounts")
+Idents(sce_singlet) <- "diagnosis"
+
+table(Idents(sce_singlet))
+```
+#check_DE
+```{r}
+check_DE <- function(x) {
+  data <- x 
+  data <- NormalizeData(object = data)
+  data.markers <- FindMarkers(data, ident.1 = "Control", ident.2 = "MS", only.pos = TRUE, assay = "RNA", slot = "data")
+  
+  return(data.markers)
+}
+
+data_no_filt <- check_DE(de_data_obj)
+data_pre_filt <- check_DE(data.filt_pre)
+data_pre_filt_dl <- check_DE(sce_singlet)
+```
+
+```{r}
+saveRDS(data_no_filt, "data_no_filt.rds")
+saveRDS(data_pre_filt, "data_pre_filt.rds")
+saveRDS(data_pre_filt_dl, "data_pre_filt_dl.rds")
+``` 
+
+```{r}
+data_no_filt_p <- data_no_filt[data_no_filt$p_val_adj < 0.05, ] 
+data_pre_filt_p <- data_pre_filt[data_pre_filt$p_val_adj < 0.05, ]
+data_pre_filt_dl_p <- data_pre_filt_dl[data_pre_filt_dl$p_val_adj < 0.05, ]
+```
+
+
+
+```{r}
+print(dim(data_no_filt_p))
+print(dim(data_pre_filt_p))
+print(dim(data_pre_filt_dl_p))
+```
+```{r}
+counts <- GetAssayData(object = sce_singlet, slot = "counts")
+nonzero <- counts > 0
+```
+
+#check 2 conditions: no filt and pre-filt
+```{r}
+length(rownames(data_no_filt_p)[rownames(data_no_filt_p) %in% rownames(data_pre_filt_p)]) # 447 genes from no filtering are in lq filtering
+length(rownames(data_no_filt_p)[!rownames(data_no_filt_p) %in% rownames(data_pre_filt_p)]) # 5 genes from no filtering are NOT in lq filtering
+```
+
+```{r}
+library(VennDiagram)
+venn.plot <- venn.diagram(
+	list(data_no_filt_p = rownames(data_no_filt_p), data_pre_filt_p = rownames(data_pre_filt_p)), 
+	"Venn_2set_1.tiff"
+	);
+```
+
+```{r}
+library(VennDiagram)
+venn.plot <- venn.diagram(
+	list(data_pre_filt_p = rownames(data_pre_filt_p), data_pre_filt_p_dl = rownames(data_pre_filt_dl_p)), 
+	"Venn_2set_pre_dl.tiff"
+	);
+```
+
+#add name of DE genes per condition 
+```{r}
+rownames(data_no_filt_p)
+```
+
+#all genes from seurat object as background
+```{r}
+write.table(as.data.frame(rownames(de_data_obj))[,1], sep="\n", quote=FALSE, row.names=FALSE, col.names=FALSE, "universe.txt")
+```
+
+#DE genes from no filter
+```{r}
+write.table(as.data.frame(rownames(data_no_filt_p))[,1], sep="\n", quote=FALSE, row.names=FALSE, col.names=FALSE, "DE_genes_no_filt.txt")
+```
+
+#DE genes from pre filter (QC)
+```{r}
+write.table(as.data.frame(rownames(data_pre_filt_p))[,1], sep="\n", quote=FALSE, row.names=FALSE, col.names=FALSE, "DE_genes_pre_filt.txt")
+```
+
+#DE genes from pre filter and Doublet detection
+```{r}
+write.table(as.data.frame(rownames(data_pre_filt_dl_p))[,1], sep="\n", quote=FALSE, row.names=FALSE, col.names=FALSE, "DE_genes_pre_doublet_filt.txt")
+```
+
+
+
+
+
+
+
+
+```{r}
+list_diff_no_with_pre <- rownames(data_no_filt_p)[!rownames(data_no_filt_p) %in% rownames(data_pre_filt_p)];list_diff_no_with_pre
+list_diff_no_with_pre_dl <- rownames(data_no_filt_p)[!rownames(data_no_filt_p) %in% rownames(data_pre_filt_dl_p)];list_diff_no_with_pre_dl
+```
+
+
+```{r}
+data_pre_filt_dl_p[order(data_pre_filt_dl_p$p_val_adj),]
+
+"IL-7R" %in% rownames(data_no_filt_p)
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
