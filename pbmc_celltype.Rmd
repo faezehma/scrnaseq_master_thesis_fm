@@ -1,0 +1,508 @@
+---
+title: "pbmc_celltype"
+output: html_document
+---
+
+```{r, setup, include=FALSE}
+knitr::opts_knit$set(root.dir = '/home/rstudio/01_data/Faezeh/HTO_datasets_dl')
+```
+
+```{r}
+library(Seurat)
+library(dplyr)
+library(tidyverse)
+library(SingleCellExperiment)
+library(dplyr)
+library(cowplot)
+library(BiocSingular)
+library(scater)
+```
+
+#functions
+```{r}
+ann_cells <- function(x){
+  
+  x_ <- as.SingleCellExperiment(x)
+  x_ <- logNormCounts(x_)
+  x_pred_mon <- SingleR(test = x_, ref = ref, labels = ref$label.main)
+  x[["label_cell"]] <- x_pred_mon$labels
+  Idents(x) <- "label_cell"
+  
+  return (x)
+}
+
+```
+
+```{r}
+RandomSubsetData<- function(object, rate, random.subset.seed = 111, ...){
+        ncells<- nrow(object@meta.data)
+        ncells.subsample<- round(ncells * rate)
+
+        set.seed(random.subset.seed)
+
+        selected.cells<- sample(colnames(object), ncells.subsample)
+        object<- subset(object, cells =  selected.cells,
+                            ...)
+        return(object)
+}
+
+```
+
+
+```{r}
+summary_table <- function(x, id) {
+  x <- x %>%
+  dplyr::filter(avg_log2FC > 1) %>%
+  dplyr::filter(p_val_adj < 0.05) %>% 
+  dplyr::select(gene, cluster) %>%
+  dplyr::group_by(cluster) %>%
+  dplyr::summarise(ngenes = n())
+    
+  colnames(x) <- c("celltype", paste0("ngenes_", id))
+  return(x)
+}
+```
+
+```{r}
+de_genes_group <- function(x){
+  x <- x %>%
+  dplyr::filter(avg_log2FC > 1) %>%
+  dplyr::filter(p_val_adj < 0.05) %>% 
+  dplyr::select(gene, cluster) %>%
+  dplyr::group_by(cluster)
+  return(x)
+}
+```
+
+#first pbmc data
+```{r}
+pbmc.umis <- readRDS("pbmc_umi_mtx.rds")
+seuratobj_umi <- CreateSeuratObject(counts = pbmc.umis, min.cells =1) #add min.cells = 1
+```
+
+
+```{r}
+BiocManager::install("celldex")
+library(celldex)
+#https://bioconductor.org/packages/3.13/data/experiment/vignettes/celldex/inst/doc/userguide.html
+ref <- celldex::MonacoImmuneData() 
+# SingleR() expects reference datasets and test datasets to be normalized and log-transformed.
+library(scuttle)
+BiocManager::install("SingleR")
+library(SingleR)
+
+seuratobj_umi_ <- as.SingleCellExperiment(seuratobj_umi)
+
+seuratobj_umi_ <- logNormCounts(seuratobj_umi_)
+```
+
+
+```{r}
+seuratobj_umi_pred_mon <- SingleR(test = seuratobj_umi_, ref = ref,
+    labels = ref$label.main)
+
+table(seuratobj_umi_pred_mon$labels)
+
+seuratobj_umi[["label_cell"]] <- seuratobj_umi_pred_mon$labels
+
+Idents(seuratobj_umi) <- "label_cell"
+#DimPlot(seuratobj_umi, group.by = "label_cell", reduction = "umap",label =T)
+seuratobj_umi <- NormalizeData(seuratobj_umi)
+# DE raw data across all cell types
+de.markers.raw <- FindAllMarkers(seuratobj_umi, test.use = "LR", only.pos = TRUE, logfc.threshold = 0.25, assay = "RNA", slot = "data")
+de.markers.raw %>%
+    group_by(cluster)
+```
+
+```{r}
+table(de.markers.raw$cluster)
+
+```
+#prefilt
+```{r}
+pbmc.hashtag <- seuratobj_umi
+pbmc.hashtag$log10nUMI <- log10(pbmc.hashtag$nCount_RNA)
+pbmc.hashtag$log10nGene <- log10(pbmc.hashtag$nFeature_RNA)
+pbmc.hashtag$mitoRatio <- PercentageFeatureSet(object = pbmc.hashtag, pattern = "^MT-") #hg19-MT-
+pbmc.hashtag$mitoRatio <- pbmc.hashtag@meta.data$mitoRatio / 100
+pbmc.hashtag$pct_mt <- pbmc.hashtag@meta.data$mitoRatio * 100
+metadata <- pbmc.hashtag@meta.data
+
+```
+
+```{r}
+seuratobj_umi_filt<- subset(pbmc.hashtag, subset = nFeature_RNA > 10^2.113 & pct_mt < 5.447);seuratobj_umi_filt
+seuratobj_umi_filt <- NormalizeData(seuratobj_umi_filt)
+de.markers.filt <- FindAllMarkers(seuratobj_umi_filt, ztest.use = "LR", only.pos = TRUE, logfc.threshold = 0.25, assay = "RNA", slot = "data")
+```
+#doublet removal
+```{r}
+library(scDblFinder)
+sce <- Seurat::as.SingleCellExperiment(seuratobj_umi_filt)
+sce <- scDblFinder(sce)
+table(sce$scDblFinder.class)
+sce_singlet <- sce[,sce$scDblFinder.class == "singlet"];sce_singlet
+
+sce_singlet <- as.Seurat(sce_singlet, counts = "counts", data = "logcounts")
+sce_singlet <- NormalizeData(sce_singlet)
+
+Idents(sce_singlet) <- "label_cell"
+de.markers.filt.dl <- FindAllMarkers(sce_singlet, test.use = "LR", only.pos = TRUE, logfc.threshold = 0.25, assay = "RNA", slot = "data")
+```
+
+
+#random subset data
+```{r}
+
+pbmc_subset<- RandomSubsetData(seuratobj_umi, 0.9)
+dim(pbmc_subset@meta.data)
+#singleR
+pbmc_subset_ <- as.SingleCellExperiment(pbmc_subset)
+pbmc_subset_<- logNormCounts(pbmc_subset_)
+
+pbmc_subset_pred_mon <- SingleR(test = pbmc_subset_, ref = ref,
+    labels = ref$label.main)
+
+table(pbmc_subset_pred_mon$labels)
+
+pbmc_subset[["label_cell"]] <- pbmc_subset_pred_mon$labels
+
+Idents(pbmc_subset) <- "label_cell"
+pbmc_subset <- NormalizeData(pbmc_subset)
+de.markers.subset <- FindAllMarkers(pbmc_subset, test.use = "LR", only.pos = TRUE, logfc.threshold = 0.25, assay = "RNA", slot = "data")
+```
+
+#summary
+```{r}
+complete_summary <- dplyr::inner_join(summary_table(de.markers.raw, id="celltype"), summary_table(de.markers.filt, id="filt"), by="celltype") %>%
+dplyr::inner_join(summary_table(de.markers.filt.dl, id="dl"), by="celltype")
+complete_summary
+
+```
+
+
+```{r}
+summary_table_v2 <- function(x_raw, x_filt, x_dl) {
+  
+  x_list = list(x_raw, x_filt, x_dl)
+  
+  i = 1
+  for (x in x_list) {
+    x_ngenes <- x %>%
+      dplyr::filter(avg_log2FC > 1) %>%
+      dplyr::filter(p_val_adj < 0.05) %>% 
+      dplyr::select(gene, cluster) %>%
+      dplyr::group_by(cluster) %>%
+      dplyr::summarise(ngenes = n())
+    colnames(x_ngenes) <- c("celltype", paste0("Ngenes_", c("raw", "filt", "dl")[[i]]))
+    
+    x_list[[i]] = x_ngenes
+    i=i+1
+  }
+
+  return_df <- dplyr::full_join(x_list[[1]], x_list[[2]], by="celltype") %>%
+    dplyr::full_join(x_list[[3]], by="celltype")
+
+  all_raw <- lapply(return_df$celltype, function(y) x_raw %>% dplyr::filter(avg_log2FC > 1 & p_val_adj < 0.05 & cluster == y) %>% dplyr::pull(gene))
+  all_filt <- lapply(return_df$celltype, function(y) x_filt %>% dplyr::filter(avg_log2FC > 1 & p_val_adj < 0.05 & cluster == y) %>% dplyr::pull(gene))
+  all_dl <- lapply(return_df$celltype, function(y) x_dl %>% dplyr::filter(avg_log2FC > 1 & p_val_adj < 0.05 & cluster == y) %>% dplyr::pull(gene))
+  
+  ncelltypes <- length(all_raw)
+  
+  # Find unique raw compared to dl
+  unique_raw_dl <- vector("list", length=ncelltypes)
+  for (j in 1:ncelltypes) {
+    unique_raw_dl[[j]] <- all_raw[[j]][!all_raw[[j]] %in% all_dl[[j]]]
+  }
+  return_df$unique_raw_dl <- sapply(unique_raw_dl, function(y) paste0(y, collapse=", "))
+  return_df$Nunique_raw_dl <- sapply(unique_raw_dl, function(y) length(y))
+  
+  # Find unique dl compared to raw
+  unique_dl_raw <- vector("list", length=ncelltypes)
+  for (j in 1:ncelltypes) {
+    unique_dl_raw[[j]] <- all_dl[[j]][!all_dl[[j]] %in% all_raw[[j]]]
+  }
+  return_df$unique_dl_raw <- sapply(unique_dl_raw, function(y) paste0(y, collapse=", "))
+  return_df$Nunique_dl_raw <- sapply(unique_dl_raw, function(y) length(y))
+
+  
+  # Find unique raw compared to filt
+  unique_raw_filt <- vector("list", length=ncelltypes)
+  for (j in 1:ncelltypes) {
+    unique_raw_filt[[j]] <- all_raw[[j]][!all_raw[[j]] %in% all_filt[[j]]]
+  }
+  return_df$unique_raw_filt <- sapply(unique_raw_filt, function(y) paste0(y, collapse=", "))
+  return_df$Nunique_raw_filt <- sapply(unique_raw_filt, function(y) length(y))
+  
+  # Find unique filt compared to raw
+  unique_filt_raw <- vector("list", length=ncelltypes)
+  for (j in 1:ncelltypes) {
+    unique_filt_raw[[j]] <- all_filt[[j]][!all_filt[[j]] %in% all_raw[[j]]]
+  }
+  return_df$unique_filt_raw <- sapply(unique_filt_raw, function(y) paste0(y, collapse=", "))
+  return_df$Nunique_filt_raw <- sapply(unique_filt_raw, function(y) length(y))
+
+  # reorer columns
+  return_df <- return_df %>% select(celltype, 
+                                    Ngenes_raw,
+                                    Ngenes_filt, 
+                                    Ngenes_dl, 
+                                    Nunique_raw_filt,
+                                    Nunique_filt_raw, 
+                                    Nunique_raw_dl, 
+                                    Nunique_dl_raw, 
+                                    unique_raw_filt,
+                                    unique_filt_raw,
+                                    unique_raw_dl,
+                                    unique_dl_raw)
+  
+  return(return_df)
+}
+
+
+de.markers.raw_summary <- summary_table_v2(de.markers.raw, de.markers.filt, de.markers.filt.dl)
+write.table(de.markers.raw_summary, file = "de.markers.pbmc_8HTO_summary.tsv", sep="\t", row.names = F)
+```
+
+
+```{r}
+de.markers.raw_summary
+```
+
+#second pbmc data
+```{r}
+pbmc_1A <- Read10X("pbmc_1A_dm/")
+pbmc_1A <- CreateSeuratObject(pbmc_1A, min.cells = 1, min.features = 1)
+```
+
+#raw data
+```{r}
+pbmc_1A <- ann_cells(pbmc_1A)
+pbmc_1A <- NormalizeData(pbmc_1A)
+de.markers.pbmc_1A.raw <- FindAllMarkers(pbmc_1A, test.use = "LR", only.pos = TRUE, logfc.threshold = 0.25, assay = "RNA", slot = "data")
+```
+#QC prefilt
+```{r}
+pbmc.hashtag <- pbmc_1A
+pbmc.hashtag$log10nUMI <- log10(pbmc.hashtag$nCount_RNA)
+pbmc.hashtag$log10nGene <- log10(pbmc.hashtag$nFeature_RNA)
+pbmc.hashtag$mitoRatio <- PercentageFeatureSet(object = pbmc.hashtag, pattern = "^MT-") #hg19-MT-
+pbmc.hashtag$mitoRatio <- pbmc.hashtag@meta.data$mitoRatio / 100
+pbmc.hashtag$pct_mt <- pbmc.hashtag@meta.data$mitoRatio * 100
+metadata <- pbmc.hashtag@meta.data
+
+pbmc_1A_filt<- subset(pbmc.hashtag, subset = nFeature_RNA > 10^2.2 & nCount_RNA > 10^2.5 & pct_mt < 7.42);pbmc_1A_filt
+pbmc_1A_filt <- NormalizeData(pbmc_1A_filt)
+de.markers.pbmc_1A.filt <- FindAllMarkers(pbmc_1A_filt, ztest.use = "LR", only.pos = TRUE, logfc.threshold = 0.25, assay = "RNA", slot = "data")
+```
+
+#doublet removal
+```{r}
+library(scDblFinder)
+sce_pbmc_1A <- Seurat::as.SingleCellExperiment(pbmc_1A_filt)
+sce_pbmc_1A <- scDblFinder(sce_pbmc_1A)
+table(sce_pbmc_1A$scDblFinder.class)
+sce_pbmc_1A_singlet <- sce_pbmc_1A[,sce_pbmc_1A$scDblFinder.class == "singlet"];sce_pbmc_1A_singlet
+
+sce_pbmc_1A_singlet <- as.Seurat(sce_pbmc_1A_singlet, counts = "counts", data = "logcounts")
+sce_pbmc_1A_singlet <- NormalizeData(sce_pbmc_1A_singlet)
+
+Idents(sce_pbmc_1A_singlet) <- "label_cell"
+de.markers.pbmc_1A.filt.dl <- FindAllMarkers(sce_pbmc_1A_singlet, test.use = "LR", only.pos = TRUE, logfc.threshold = 0.25, assay = "RNA", slot = "data")
+```
+
+
+#summary_2nd data
+```{r}
+complete_summary <- dplyr::full_join(summary_table(de.markers.pbmc_1A.raw, id="raw"), summary_table(de.markers.pbmc_1A.filt, id="filt"), by="celltype") %>%
+dplyr::full_join(summary_table(de.markers.pbmc_1A.filt.dl, id="dl"), by="celltype")
+complete_summary
+```
+
+```{r}
+complete_summary <- transform(complete_summary, additional_raw_filt= ngenes_filt-ngenes_raw, additional_raw_filt_dl=ngenes_dl-ngenes_raw);complete_summary
+```
+```{r}
+de.markers.pbmc_1A.raw
+```
+
+
+#data for venn diagram
+```{r}
+data_no_filt_p <- de.markers.pbmc_1A.raw %>% dplyr::filter(avg_log2FC > 1) %>% dplyr::filter(p_val_adj < 0.05)
+data_no_filt_p <- data_no_filt_p[!(data_no_filt_p$cluster=="Progenitors" | data_no_filt_p$cluster=="Basophils"),]
+
+data_pre_filt_p <- de.markers.pbmc_1A.filt %>% dplyr::filter(avg_log2FC > 1) %>% dplyr::filter(p_val_adj < 0.05) 
+data_pre_filt_p <- data_pre_filt_p[!(data_pre_filt_p$cluster=="Progenitors" | data_pre_filt_p$cluster=="Basophils"),]
+
+data_pre_filt_dl_p <- de.markers.pbmc_1A.filt.dl %>% dplyr::filter(avg_log2FC > 1) %>% dplyr::filter(p_val_adj < 0.05) 
+data_pre_filt_dl_p <- data_pre_filt_dl_p[!(data_pre_filt_dl_p$cluster=="Progenitors" | data_pre_filt_dl_p$cluster=="Basophils"),]
+```
+
+```{r}
+library(VennDiagram)
+venn.plot <- venn.diagram(
+	list(raw_data = rownames(data_no_filt_p), prefilt_data = rownames(data_pre_filt_p), prefilt_dl_data = rownames(data_pre_filt_dl_p)), 
+	"Venn_3set_raw_pre_dl.tiff"
+	);
+```
+
+```{r}
+# library(VennDiagram)
+# venn.plot <- venn.diagram(
+# 	list(raw_data = rownames(data_no_filt_p), prefilt_dl_data = rownames(data_pre_filt_dl_p)), 
+# 	"Venn_2set_raw_dl.tiff"
+# 	);
+```
+
+
+
+
+
+
+```{r}
+summary_table_v2 <- function(x_raw, x_filt, x_dl) {
+  
+  x_list = list(x_raw, x_filt, x_dl)
+  
+  i = 1
+  for (x in x_list) {
+    x_ngenes <- x %>%
+      dplyr::filter(avg_log2FC > 1) %>%
+      dplyr::filter(p_val_adj < 0.05) %>% 
+      dplyr::select(gene, cluster) %>%
+      dplyr::group_by(cluster) %>%
+      dplyr::summarise(ngenes = n())
+    colnames(x_ngenes) <- c("celltype", paste0("Ngenes_", c("raw", "filt", "dl")[[i]]))
+    
+    x_list[[i]] = x_ngenes
+    i=i+1
+  }
+
+  return_df <- dplyr::full_join(x_list[[1]], x_list[[2]], by="celltype") %>%
+    dplyr::full_join(x_list[[3]], by="celltype")
+
+  all_raw <- lapply(return_df$celltype, function(y) x_raw %>% dplyr::filter(avg_log2FC > 1 & p_val_adj < 0.05 & cluster == y) %>% dplyr::pull(gene))
+  all_filt <- lapply(return_df$celltype, function(y) x_filt %>% dplyr::filter(avg_log2FC > 1 & p_val_adj < 0.05 & cluster == y) %>% dplyr::pull(gene))
+  all_dl <- lapply(return_df$celltype, function(y) x_dl %>% dplyr::filter(avg_log2FC > 1 & p_val_adj < 0.05 & cluster == y) %>% dplyr::pull(gene))
+  
+  ncelltypes <- length(all_raw)
+  
+  # Find unique raw compared to dl
+  unique_raw_dl <- vector("list", length=ncelltypes)
+  for (j in 1:ncelltypes) {
+    unique_raw_dl[[j]] <- all_raw[[j]][!all_raw[[j]] %in% all_dl[[j]]]
+  }
+  return_df$unique_raw_dl <- sapply(unique_raw_dl, function(y) paste0(y, collapse=", "))
+  return_df$Nunique_raw_dl <- sapply(unique_raw_dl, function(y) length(y))
+  
+  # Find unique dl compared to raw
+  unique_dl_raw <- vector("list", length=ncelltypes)
+  for (j in 1:ncelltypes) {
+    unique_dl_raw[[j]] <- all_dl[[j]][!all_dl[[j]] %in% all_raw[[j]]]
+  }
+  return_df$unique_dl_raw <- sapply(unique_dl_raw, function(y) paste0(y, collapse=", "))
+  return_df$Nunique_dl_raw <- sapply(unique_dl_raw, function(y) length(y))
+
+  
+  # Find unique raw compared to filt
+  unique_raw_filt <- vector("list", length=ncelltypes)
+  for (j in 1:ncelltypes) {
+    unique_raw_filt[[j]] <- all_raw[[j]][!all_raw[[j]] %in% all_filt[[j]]]
+  }
+  return_df$unique_raw_filt <- sapply(unique_raw_filt, function(y) paste0(y, collapse=", "))
+  return_df$Nunique_raw_filt <- sapply(unique_raw_filt, function(y) length(y))
+  
+  # Find unique filt compared to raw
+  unique_filt_raw <- vector("list", length=ncelltypes)
+  for (j in 1:ncelltypes) {
+    unique_filt_raw[[j]] <- all_filt[[j]][!all_filt[[j]] %in% all_raw[[j]]]
+  }
+  return_df$unique_filt_raw <- sapply(unique_filt_raw, function(y) paste0(y, collapse=", "))
+  return_df$Nunique_filt_raw <- sapply(unique_filt_raw, function(y) length(y))
+
+  # reorer columns
+  return_df <- return_df %>% select(celltype, 
+                                    Ngenes_raw,
+                                    Ngenes_filt, 
+                                    Ngenes_dl, 
+                                    Nunique_raw_filt,
+                                    Nunique_filt_raw, 
+                                    Nunique_raw_dl, 
+                                    Nunique_dl_raw, 
+                                    unique_raw_filt,
+                                    unique_filt_raw,
+                                    unique_raw_dl,
+                                    unique_dl_raw)
+  
+  return(return_df)
+}
+
+
+de.markers.pbmc_1A.raw_summary <- summary_table_v2(de.markers.pbmc_1A.raw, de.markers.pbmc_1A.filt, de.markers.pbmc_1A.filt.dl)
+write.table(de.markers.pbmc_1A.raw_summary, file = "de.markers.pbmc_1A_summary.tsv", sep="\t", row.names = F)
+```
+
+```{r}
+de.markers.pbmc_1A.raw_summary
+```
+
+
+```{r}
+de.markers.pbmc_1A.filt.dl %>% dplyr::filter(avg_log2FC > 1 & p_val_adj < 0.05 & cluster == "Monocytes" & gene == "TKT")
+```
+```{r}
+de.markers.pbmc_1A.raw %>% dplyr::filter(cluster == "T cells" & gene == "APOBEC3G")
+```
+
+
+```{r}
+test1 <- de.markers.pbmc_1A.raw %>% dplyr::filter(avg_log2FC > 1 & p_val_adj < 0.05 & cluster == "B cells" & gene == "MRPL51") %>% dplyr::pull(gene)
+test2 <- de.markers.pbmc_1A.filt %>% dplyr::filter(avg_log2FC > 1 & p_val_adj < 0.05 & cluster == "B cells" & gene == "MRPL51") %>% dplyr::pull(gene)
+
+print(test1)
+print(test2)
+# test1[!test1 %in% test2]
+```
+#go terms
+```{r}
+data_no_filt_p <- de.markers.pbmc_1A.raw %>% dplyr::filter(avg_log2FC > 1) %>% dplyr::filter(p_val_adj < 0.05)
+data_no_filt_p <- data_no_filt_p[!(data_no_filt_p$cluster=="Progenitors" | data_no_filt_p$cluster=="Basophils"),]
+
+data_pre_filt_p <- de.markers.pbmc_1A.filt %>% dplyr::filter(avg_log2FC > 1) %>% dplyr::filter(p_val_adj < 0.05) 
+data_pre_filt_p <- data_pre_filt_p[!(data_pre_filt_p$cluster=="Progenitors" | data_pre_filt_p$cluster=="Basophils"),]
+
+data_pre_filt_dl_p <- de.markers.pbmc_1A.filt.dl %>% dplyr::filter(avg_log2FC > 1) %>% dplyr::filter(p_val_adj < 0.05) 
+data_pre_filt_dl_p <- data_pre_filt_dl_p[!(data_pre_filt_dl_p$cluster=="Progenitors" | data_pre_filt_dl_p$cluster=="Basophils"),]
+```
+
+
+
+#all genes from seurat object as background
+```{r}
+write.table(as.data.frame(rownames(pbmc_1A))[,1], sep="\n", quote=FALSE, row.names=FALSE, col.names=FALSE, "pbmc_1A_dm/go_terms/universe_pbmc1A.txt")
+```
+
+#DE genes from no filter
+```{r}
+write.table(as.data.frame(rownames(data_no_filt_p))[,1], sep="\n", quote=FALSE, row.names=FALSE, col.names=FALSE, "pbmc_1A_dm/go_terms/DE_genes_no_filt_pbmc1A.txt")
+```
+
+#DE genes from pre filter (QC)
+```{r}
+write.table(as.data.frame(rownames(data_pre_filt_p))[,1], sep="\n", quote=FALSE, row.names=FALSE, col.names=FALSE, "pbmc_1A_dm/go_terms/DE_genes_pre_filt_pbmc1A.txt")
+```
+
+#DE genes from pre filter and Doublet detection
+```{r}
+write.table(as.data.frame(rownames(data_pre_filt_dl_p))[,1], sep="\n", quote=FALSE, row.names=FALSE, col.names=FALSE, "pbmc_1A_dm/go_terms/DE_genes_pre_doublet_filt_pbmc1A.txt")
+```
+
+
+
+
+
+
+
+
+
