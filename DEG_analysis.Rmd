@@ -1,0 +1,73 @@
+---
+title: "bar_plot_DEGs"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = '~/Documents/')
+```
+
+```{r}
+library(ggplot2)
+library(readODS)
+library(reshape2)
+library(gridExtra)
+
+result_1 <- read_ods('de.markers.pbmc_8HTO_summary.ods', sheet = 2); str(result_1)
+result_1$Nunique_filt_raw <- as.numeric(result_1$Nunique_filt_raw)
+result_1$Nunique_dl_raw <- as.numeric(result_1$Nunique_dl_raw)
+result_1$celltype <- factor(result_1$celltype)
+
+
+result <- read_ods('de.markers.pbmc_1A_summary.ods', sheet = 2); str(result)
+result$Nunique_filt_raw <- as.numeric(result$Nunique_filt_raw)
+result$Nunique_dl_raw <- as.numeric(result$Nunique_dl_raw)
+result$celltype <- factor(result$celltype)
+
+
+```
+
+```{r}
+df1 <- data.frame("After_filtering_low-quality_cells"= result_1$Nunique_filt_raw, "After_filtering_low-quality_cells_and_doublets" = result_1$Nunique_dl_raw, Celltype=result_1$celltype)
+df2 <- melt(df1, id.vars='Celltype')
+df2$variable <- sapply(df2$variable, function(x) gsub("_", " ", x))
+df2$variable <- sapply(df2$variable, function(x) gsub("\\.", "-", x))
+
+head(df2)
+
+pbmc_8HTO <- ggplot(df2, aes(x=Celltype, y=value, fill=variable)) +
+    geom_bar(stat='identity', position='dodge')+ theme_bw()+
+  labs(x=NULL, y="# Additional DEGs", title="PBMC_1")+ theme(text = element_text(size=18))+ theme(axis.text.x = element_text(angle = 90))+
+  theme(legend.title = element_blank())+ theme(legend.justification = c(0,1), legend.position = c(0,1), legend.background = element_rect(fill = NA))
+pbmc_8HTO
+```
+
+
+
+
+
+```{r}
+df1 <- data.frame("After_filtering_low-quality_cells"= result$Nunique_filt_raw, "After_filtering_low-quality_cells_and_doublets" = result$Nunique_dl_raw, Celltype=result$celltype)
+df2 <- melt(df1, id.vars='Celltype')
+df2$variable <- sapply(df2$variable, function(x) gsub("_", " ", x))
+df2$variable <- sapply(df2$variable, function(x) gsub("\\.", "-", x))
+
+head(df2)
+
+pbmc_1A <- ggplot(df2, aes(x=Celltype, y=value, fill=variable)) +
+    geom_bar(stat='identity', position='dodge')+ theme_bw()+
+  labs(x=NULL, y=NULL, title="PBMC_2")+ theme(text = element_text(size=18))+theme(legend.title = element_blank())+ theme(text = element_text(size=18))+ theme(axis.text.x = element_text(angle = 90))+theme(legend.justification = c(0,1), legend.position = c(0,1), legend.background = element_rect(fill = NA))
+
+pbmc_1A
+```
+
+```{r}
+res.dir <- paste0("bar_plot_DEGs")
+dir.create(res.dir)
+ggsave(
+  grid.arrange(cowplot::plot_grid(pbmc_8HTO,pbmc_1A, align = "hv", ncol = 2)),
+  file = paste0(res.dir, "bar_plots_2_degs_number.pdf"), width = 12, height = 6
+)
+
+```
+
