@@ -1,0 +1,499 @@
+---
+title: "cell-calling_results"
+author: "Faezeh"
+date: "5/17/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+setwd("/Volumes/SD Card/Thesis/new_analysis")
+```
+
+```{r}
+
+```
+
+```{r}
+locs <- c("merge.methods.pbmc.rds", "merge.methods.pbmc_10k_v3.rds","merge.methods.heart1kv3.rds", "merge.methods.neuron1kv3.rds", "merge.methods.neuron_5k_v3.rds","merge.methods.CISE13.rds")
+
+plot_list = list()
+for(loc in locs){
+  data <- readRDS(loc)
+  data$nUMI <- data$nCount_RNA
+  #data$log10nUMI <- log10(data$nCount_RNA)
+  p <- data@meta.data %>%
+  ggplot(aes(color=methods, x=nUMI, fill= methods)) +
+  geom_density(alpha = 0.0001) +
+  ggtitle(loc) +
+  scale_x_log10() +
+  theme_classic() +
+  ylab("frequency")
+  plot_list[[loc]] = p
+}
+
+# pdf("/Volumes/SD Card/Thesis/new_analysis/cell_calling_all_data_umi_ggplot.pdf", width = 15, height = 10)
+# for (loc in locs) {
+#     print(plot_list[[loc]])
+# }
+# dev.off()
+```
+
+```{r}
+data_list = list()
+for(loc in locs){
+  data <- readRDS(loc)
+  data_list[[loc]] = data
+}
+```
+
+
+```{r}
+
+cell_calling_plot <- function(data, name_data){
+  data$log10nUMI <- log10(data$nCount_RNA)
+  p <- data@meta.data %>%
+  ggplot(aes(color=methods, x=log10nUMI, fill= methods)) +
+  geom_density(alpha = 0.0001) +
+  labs(x="log10nUMI",y="frequency", title = name_data)+
+  scale_x_log10() +
+  theme_bw()+ theme(legend.position = "none")
+
+}
+
+cell_calling_plot_l <- function(data, name_data){
+  data$log10nUMI <- log10(data$nCount_RNA)
+  p <- data@meta.data %>%
+  ggplot(aes(color=methods, x=log10nUMI, fill= methods)) +
+  geom_density(alpha = 0.0001) +
+  labs(x="log10nUMI",y="frequency", title = name_data)+
+  scale_x_log10() +
+  theme_bw()+ theme( legend.justification = c(0,1),legend.position = c(0,1), legend.background = element_rect(fill = NA))
+
+}
+```
+
+```{r}
+p_pbmc1 <- cell_calling_plot(data_list$merge.methods.pbmc.rds,"PBMC_1k_v3")
+p_pbmc10 <- cell_calling_plot(data_list$merge.methods.pbmc_10k_v3.rds, "PBMC_10k_v3")
+p_heart <- cell_calling_plot(data_list$merge.methods.heart1kv3.rds, "heart_1k_v3")
+p_n1 <- cell_calling_plot(data_list$merge.methods.neuron1kv3.rds, "neuron_1k_v3")
+p_n5 <- cell_calling_plot(data_list$merge.methods.neuron_5k_v3.rds, "neuron_5k_v3")
+p_cise <- cell_calling_plot_l(data_list$merge.methods.CISE13.rds, "CISE13_5k_v2")
+
+res.dir <- paste0("cell_calling_res/")
+dir.create(res.dir)
+ggsave(
+  grid.arrange(cowplot::plot_grid(p_pbmc1, p_pbmc10, p_heart, p_n1, p_n5, p_cise, align="h", ncol=3)
+  ),
+  file=paste0(res.dir, "cell_calling_dist_plots.pdf"), width=12, height=6
+)
+
+```
+
+```{r}
+
+```
+
+```{r}
+data <- readRDS("merge.methods.pbmc.rds")
+```
+
+
+```{r}
+library(EmptyNN)
+library(keras)
+library(Seurat)
+```
+
+```{r}
+# fname_raw <- "/Volumes/SD Card/Thesis/pbmc_1k_v3_raw_feature_bc_matrix/raw_feature_bc_matrix/"
+# expression_matrix_raw<-Read10X(data.dir =  fname_raw)
+# expression_matrix_raw<-as(expression_matrix_raw, "dgCMatrix")
+# nn.res <- emptynn(t(expression_matrix_raw), threshold = 50, k= 2, iteration = 1)
+
+```
+
+```{r}
+
+obj <- readRDS("merge.methods.neuron1kv3.rds")
+obj.list <- SplitObject(obj, split.by = "methods")
+cellranger <- obj.list$cellranger
+emptydrops <- obj.list$emptydrops
+seurat200 <- obj.list$seurat200
+
+```
+
+```{r}
+check_cluster_umap <- function(x) {
+  data <- x 
+  data <- NormalizeData(object = data)
+  data <- ScaleData(data)
+  data <- FindVariableFeatures(data, selection.method = "vst", nfeatures = 2000)
+  data <- RunPCA(data)
+  data <- RunUMAP(data, dims = 1:10)
+  data <- FindNeighbors(data, dims = 1:10)
+  data <- FindClusters(data, resolution = 0.4)
+  return(data)
+}
+```
+
+
+```{r}
+#empty.seurat <- as.Seurat(s_raw_emptydrops, counts = "counts", data = "counts")
+# empty.seurat_c <- check_cluster_umap(empty.seurat)
+# cell.num_emptydrops <- table(Idents(empty.seurat_c))
+```
+
+```{r}
+emptydrops <- check_cluster_umap(emptydrops)
+cellranger <- check_cluster_umap(cellranger)
+seurat200 <- check_cluster_umap(seurat200)
+```
+
+```{r}
+cell.num_emptydrops <- table(Idents(emptydrops));cell.num_emptydrops
+cell.num_cellranger <- table(Idents(cellranger));cell.num_cellranger
+cell.num_seurat <- table(Idents(seurat200));cell.num_seurat
+
+```
+
+
+
+```{r}
+cells <- WhichCells(seurat200, idents = 16)
+x <- subset(seurat200,cells = cells)
+```
+
+
+```{r}
+# locs <- c(cellranger, emptydrops, seurat200)
+# 
+# i = 1
+# for(loc in locs){
+#   #print(loc)
+#   data <- loc
+#   data <- NormalizeData(object = data)
+#   data <- ScaleData(data)
+#   data <- FindVariableFeatures(data, selection.method = "vst", nfeatures = 2000)
+#   data <- RunPCA(data)
+#   data <- RunUMAP(data, dims = 1:15)
+#   data <- FindNeighbors(data, dims = 1:15)
+#   data <- FindClusters(data, resolution = 0.2)
+#   locs[i] <- data
+#   i = 1 + 1
+#   
+# }
+```
+
+```{r}
+DimPlot(cellranger_c, reduction = "umap", label = TRUE)
+```
+
+```{r}
+DimPlot(emptydrops_c, reduction = "umap", label = TRUE)
+```
+
+```{r}
+DimPlot(empty.seurat_c, reduction = "umap", label = TRUE)
+```
+
+```{r}
+DimPlot(seurat200_c, reduction = "umap", label = TRUE)
+
+```
+
+```{r}
+library(gridExtra)
+library(grid)
+library(cowplot)
+library(UpSetR)
+library(ggplot2)
+library(ggpubr)
+library(ggplotify)
+
+upset_plot <- function(data, name){
+  data_cr <- subset(data, idents = "cellranger")
+  data_ed <- subset(data, idents = "emptydrops")
+  data_s <- subset(data, idents = "seurat200")
+  my_list <- list(
+  "CellRanger 3" = sub('.*\\_','', colnames(data_cr)),
+  "EmptyDrops" = sub('.*\\_','', colnames(data_ed)),
+  "Seurat 200" = sub('.*\\_','', colnames(data_s))
+  )
+  u <- upset(fromList(my_list), sets.bar.color = "black", order.by = "degree",
+      main.bar.color = "black", text.scale = c(1.6, 1.6, 1.2, 1, 1.6, 1.6), sets=c("Seurat 200", "EmptyDrops", "CellRanger 3"), keep.order=TRUE)
+  #t <- as.ggplot(as.grob(u)) + ggtitle(name)
+  print(u)
+}
+
+```
+
+
+```{r}
+
+```
+
+```{r}
+pdf("cell_calling_res/upset_pbmc_1k_v3.pdf", width = 7, height = 5)
+upset_plot(data_list$merge.methods.pbmc.rds,"PBMC_1k_v3")
+dev.off()
+
+pdf("cell_calling_res/upset_pbmc_10k_v3.pdf",width = 7, height = 5)
+upset_plot(data_list$merge.methods.pbmc_10k_v3.rds, "PBMC_10k_v3")
+dev.off()
+
+pdf("cell_calling_res/upset_heart_1k_v3.pdf", width = 7, height = 5)
+p_heart <- upset_plot(data_list$merge.methods.heart1kv3.rds, "heart_1k_v3")
+dev.off()
+
+pdf("cell_calling_res/upset_neuron_1k_v3.pdf", width = 7, height = 5)
+p_n1 <- upset_plot(data_list$merge.methods.neuron1kv3.rds, "neuron_1k_v3")
+dev.off()
+
+pdf("cell_calling_res/upset_neuron_5k_v3.pdf", width = 7, height = 5)
+p_n5 <- upset_plot(data_list$merge.methods.neuron_5k_v3.rds, "neuron_5k_v3")
+dev.off()
+
+pdf("cell_calling_res/upset_cise13.pdf", width = 7, height = 5)
+p_cise <- upset_plot(data_list$merge.methods.CISE13.rds, "CISE13_5k_v2")
+dev.off()
+
+res.dir <- paste0("cell_calling_res/")
+dir.create(res.dir)
+
+ggsave(
+  grid.arrange(cowplot::plot_grid(p_pbmc1, p_pbmc10, p_heart, p_n1, p_n5, p_cise, align="hv", ncol=3)
+  ),
+  file=paste0(res.dir, "cell_calling_upsetR_plots.png"), width=16, height=8
+)
+```
+
+```{r}
+uu_c <- cowplot::plot_grid(NULL, p$Main_bar, p$Sizes, p$Matrix,
+                            nrow=2, align='v', rel_heights = c(3,1),
+                           rel_widths = c(2,3), labels = "data");uu_c
+
+ggsave(grid.arrange(uu_c, uu_c, ncol = 2), file=paste0(res.dir, "test.pdf"), width=14, height=8)
+```
+
+```{r}
+
+```
+
+
+```{r}
+my_plot_list <- list(p,t)
+ggarrange(plotlist = my_plot_list,
+          labels = c("A", "B"),
+          ncol = 2, nrow = 1)
+```
+
+
+
+#venn
+```{r}
+library(VennDiagram)
+library(grid)
+
+venn_plot <- function(data){
+  data_cr <- subset(data, idents = "cellranger")
+  data_ed <- subset(data, idents = "emptydrops")
+  data_s <- subset(data, idents = "seurat200")
+  my_list <- list(
+  "A" = sub('.*\\_','', colnames(data_cr)),
+  "B" = sub('.*\\_','', colnames(data_ed)),
+  "C" = sub('.*\\_','', colnames(data_s))
+  )
+  vplot <- venn.diagram(
+  x = my_list,
+  filename = NULL,
+  euler.d = TRUE,
+  fil= c("red","green","blue"),
+  cex = 2,
+  cat.cex = 0.7,
+  reverse = TRUE);
+
+}
+```
+
+```{r}
+p_pbmc1 <- venn_plot(data_list$merge.methods.pbmc.rds)
+p_pbmc10 <- venn_plot(data_list$merge.methods.pbmc_10k_v3.rds)
+p_heart <- venn_plot(data_list$merge.methods.heart1kv3.rds)
+p_n1 <- venn_plot(data_list$merge.methods.neuron1kv3.rds)
+p_n5 <- venn_plot(data_list$merge.methods.neuron_5k_v3.rds)
+p_cise <- venn_plot(data_list$merge.methods.CISE13.rds)
+```
+
+```{r}
+library(gridExtra)
+cowplot::plot_grid(gTree(children = p_pbmc1), gTree(children = p_pbmc10), gTree(children = p_heart), gTree(children = p_n1), gTree(children = p_n5), gTree(children = p_cise), ncol = 3,
+                   labels = c("Central Asia","Africa"))
+```
+
+#test for clustering proportion
+
+
+
+```{r}
+cluster_pro <- function(raw_data_dir, cellranger, emptydrops, seurat200) {
+  fname_raw <- raw_data_dir
+  raw <- Read10X(fname_raw)
+  #raw <- raw$`Gene Expression`
+  raw<-as(raw, "dgCMatrix")
+  raw<-SingleCellExperiment(list(counts=raw))
+  colnames(raw) <- gsub("\\-.*", "", colnames(raw))
+  
+  
+  CellRanger <- sub('.*\\_','', colnames(cellranger))
+  EmptyDrops <- sub('.*\\_','', colnames(emptydrops))
+  Seurat <- sub('.*\\_','', colnames(seurat200))
+  
+  colData(raw)$EmpDropsFilt <- colnames(raw) %in% EmptyDrops
+  colData(raw)$CellRangerFilt <- colnames(raw) %in% CellRanger
+  colData(raw)$SeuratFilt <- colnames(raw) %in% Seurat
+  
+  # Select all unique cells
+  selected <- raw[, colData(raw)$CellRangerFilt | colData(raw)$EmpDropsFilt | colData(raw)$SeuratFilt]
+  
+  # Remove zero count genes
+  selected <- selected[Matrix::rowSums(counts(selected)) > 0, ]
+  
+  # Convert to seurat
+  selected <- as.Seurat(selected, counts = "counts", data = "counts")
+  
+  # Add count meta
+  selected_counts <- selected@assays$RNA@counts
+  selected_meta <- selected[[]]
+  
+  selected <- CreateSeuratObject(counts=selected_counts, meta.data=selected_meta)
+  
+  # Calculate clusters
+  selected <- check_cluster_umap(selected)
+  
+  selected$method <- NA
+  selected$method[selected$EmpDropsFilt == TRUE & selected$CellRangerFilt == TRUE & selected$SeuratFilt == TRUE] <- "All three"
+  selected$method[selected$EmpDropsFilt == TRUE & selected$CellRangerFilt == FALSE & selected$SeuratFilt == FALSE] <- "EmptyDrops only"
+  selected$method[selected$EmpDropsFilt == FALSE & selected$CellRangerFilt == TRUE & selected$SeuratFilt == FALSE] <- "CellRanger only"
+  selected$method[selected$EmpDropsFilt == FALSE & selected$CellRangerFilt == FALSE & selected$SeuratFilt == TRUE] <- "Seurat only"
+  selected$method[selected$EmpDropsFilt == TRUE & selected$CellRangerFilt == TRUE & selected$SeuratFilt == FALSE] <- "EmptyDrops + CellRanger"
+  selected$method[selected$EmpDropsFilt == FALSE & selected$CellRangerFilt == TRUE & selected$SeuratFilt == TRUE] <- "CellRanger + Seurat"
+  selected$method[selected$EmpDropsFilt == TRUE & selected$CellRangerFilt == FALSE & selected$SeuratFilt == TRUE] <- "EmptyDrops + Seurat"
+  
+  #return(selected[[]])
+  return(selected)
+}
+```
+
+
+
+```{r}
+library(ggplot2)
+library(dplyr)
+proportion_plot <- function(so_meta) {
+  plot_data <- so_meta %>%
+    group_by(seurat_clusters, method) %>%
+    summarise(count = n()) %>%
+    mutate(prop = count / sum(count)) %>%
+    mutate(method_overlap = factor(method, levels = c("All three", "EmptyDrops only", "CellRanger only", "Seurat only", 
+                                                      "EmptyDrops + CellRanger", "EmptyDrops + Seurat", "CellRanger + Seurat")))
+  
+  
+  p <- ggplot(plot_data, aes(x=seurat_clusters, y=prop, fill=method)) +
+    geom_col()+labs(x= "Cluster", y="Proportion of cluster")+ labs(fill = "Methods")+theme_minimal()
+    
+  return(p)
+  
+  
+}
+
+
+#proportion_plot(selected[[]])
+
+```
+
+
+```{r}
+vln <- function(selected_data){
+ selected_data$log10nUMI <- log10(selected_data$nCount_RNA)
+ #VlnPlot(selected, features="nCount_RNA", pt.size = 0)
+ plot <- VlnPlot(selected_data, features="log10nUMI", pt.size = 0)+scale_fill_grey(start=0.8, end=0.8)+theme(legend.position = "none")+ labs(x= "Cluster")+ theme(plot.title = element_text(size=12))
+ return(plot)
+
+# selected$log10_genes <- log10(selected$nFeature_RNA)
+# VlnPlot(selected, features="nFeature_RNA", pt.size = 0)
+# VlnPlot(selected, features="log10_genes", pt.size = 0) 
+}
+
+```
+
+
+```{r}
+obj <- readRDS("merge.methods.pbmc.rds")
+obj.list <- SplitObject(obj, split.by = "methods")
+cellranger <- obj.list$cellranger
+emptydrops <- obj.list$emptydrops
+seurat200 <- obj.list$seurat200
+```
+
+```{r}
+n1k_cl <- cluster_pro("/Volumes/SD Card/Thesis_2/neuron1k_raw_feature_bc_matrix/", cellranger = cellranger, emptydrops = emptydrops, seurat200 = seurat200)
+n1k <- proportion_plot(n1k_cl@meta.data)+ggtitle("neuron_1k_v3")
+n1k_vln <- vln(n1k_cl)
+```
+
+```{r}
+n5k_cl <- cluster_pro("/Volumes/SD Card/Thesis_2/output_5k_neuron_v3/raw_feature_bc_matrix/", cellranger = cellranger, emptydrops = emptydrops, seurat200 = seurat200)
+n5k <- proportion_plot(n5k_cl@meta.data)+ggtitle("neuron_5k_v3")
+n5k_vln <- vln(n5k_cl)
+```
+
+```{r}
+p1k_cl <- cluster_pro("/Volumes/SD Card/Thesis/pbmc_1k_v3_raw_feature_bc_matrix/raw_feature_bc_matrix/", cellranger = cellranger, emptydrops = emptydrops, seurat200 = seurat200)
+p1k <- proportion_plot(p1k_cl@meta.data)+ggtitle("PBMC_1k_v3")
+p1k_vln <- vln(p1k_cl)
+```
+
+```{r}
+p10k_cl <- cluster_pro("/Volumes/SD Card/Thesis/pbmc_10k_v3_raw_feature_bc_matrix/", cellranger = cellranger, emptydrops = emptydrops, seurat200 = seurat200)
+p10k <- proportion_plot(p10k_cl@meta.data)+ggtitle("PBMC_10k_v3")
+p10k_vln <- vln(p10k_cl)
+```
+
+
+```{r}
+h1k_cl <- cluster_pro("/Volumes/SD Card/Thesis/heart_1k_v3_raw_feature_bc_matrix/raw_feature_bc_matrix/", cellranger = cellranger, emptydrops = emptydrops, seurat200 = seurat200)
+h1k <- proportion_plot(h1k_cl@meta.data)+ggtitle("heart_1k_v3")
+h1k_vln <- vln(h1k_cl)
+```
+
+```{r}
+ci_cl <- cluster_pro("/Volumes/SD Card/Thesis_2/CISE13_counts/raw_feature_bc_matrix/", cellranger = cellranger, emptydrops = emptydrops, seurat200 = seurat200)
+ci <- proportion_plot(ci_cl@meta.data)+ggtitle("CISE13_5k_v2")
+ci_vln <- vln(ci_cl)
+```
+
+```{r}
+res.dir <- paste0("cell_calling_res/")
+dir.create(res.dir)
+ggsave(
+  grid.arrange(cowplot::plot_grid(p1k,p1k_vln,p10k,p10k_vln,h1k,h1k_vln,n1k,n1k_vln,n5k,n5k_vln,ci,ci_vln, align="hv", ncol=2)
+  ),
+  file=paste0(res.dir, "cell_calling_proportion_clusters_plots.pdf"), width=12, height=15
+)
+```
+
+
+```{r}
+saveRDS(n1k_cl,"cell_calling_res/n1k_cl.rds")
+#selected_s <- as.Seurat(selected,, counts = "counts", data = "counts")
+```
+
+```{r}
+#selected_s <- check_cluster_umap(selected_s)
+```
+
